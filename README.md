@@ -1,6 +1,5 @@
 # detwin
 
---
 
 [![license](https://img.shields.io/badge/License-GPL--v3-blue)](https://www.gnu.org/licenses/gpl-3.0.en.html)
 ![language](https://img.shields.io/badge/Language-C-blue)
@@ -10,9 +9,7 @@
 
 [Reference paper](http://journals.iucr.org/m/issues/2014/06/00/it5003/index.html) ( Liu, H., & Spence, J. C. (2014). The indexing ambiguity in serial femtosecond crystallography (SFX) resolved using an expectation maximization algorithm. IUCrJ, 1(6), 393-401. )
 
-### How to install it ?
-
---
+### - How to install it ?
 
 **First**, download crystfel package [here](http://www.desy.de/~twhite/crystfel/download.html). Unzip it.
 
@@ -22,9 +19,7 @@
 
 **Finally**, install crystfel !
 
-### How to use it ?
-
---
+### - How to use it ?
 
 **I** . Using unix *man* command for help information.
 
@@ -68,8 +63,7 @@
       --push-res=<n>        Integrate higher than apparent resolution cutoff.
 ```
 
-### Supported
---
+### - Supported
 
 [![license](https://img.shields.io/badge/built-crystfel--0.6.3-green)](http://www.desy.de/~twhite/crystfel/crystfel-0.6.3.tar.gz)
 [![license](https://img.shields.io/badge/built-crystfel--0.7.0-yellow)](http://www.desy.de/~twhite/crystfel/crystfel-0.7.0.tar.gz)
