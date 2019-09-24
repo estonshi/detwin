@@ -49,6 +49,7 @@
 #include <getopt.h>
 #include <assert.h>
 
+#include "version.h"
 #include "utils.h"
 #include "statistics.h"
 #include "reflist-utils.h"

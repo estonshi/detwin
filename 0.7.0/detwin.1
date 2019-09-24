@@ -1,0 +1,182 @@
+.\"
+.\" detwin man page
+.\"
+.\" Copyright © 2012-2018 Deutsches Elektronen-Synchrotron DESY,
+.\"                       a research centre of the Helmholtz Association.
+.\" Copyright © 2014-2019 Beijing Computational Science Research Center
+.\"
+.\" A three-party patch for CrystFEL - crystallography with a FEL
+.\"
+
+.TH DETWIN 1
+.SH NAME
+detwin \- Crystal-twinning solver and Monte Carlo merging of Bragg intensities
+.SH SYNOPSIS
+.PP
+.B detwin
+\fB-i\fR \fImypatterns.stream\fR \fB-o\fR \fImydata.hkl\fR \fB-y\fR \fIpointgroup\fR \fB-k\fR \fIspacegroupNum\fR [\fBoptions\fR] \fB...\fR
+.PP
+.B detwin
+\fB--help\fR
+
+.SH DESCRIPTION
+detwin takes a data stream, such as that from \fBindexamajig\fR, solves the 
+twinning problem and merges the many individual intensities together to form 
+a single list of reflection intensities which are useful for crystallography. 
+Merging is done in the same way with process_hkl.
+For algorithm please refer to 'Liu, H. , & Spence, J. C. H. . (2014). The indexing ambiguity in serial femtosecond crystallography (sfx) resolved using an expectation maximization algorithm. Iucrj, 1(Pt 6), 393-401.'
+
+.SH OPTIONS
+.PD 0
+.IP "\fB-i\fR \fIfilename\fR"
+.IP \fB--input=\fR\fIfilename\fR
+.PD
+Give the name of the input stream.  \fB--input=-\fR means to use stdin.
+
+.PD 0
+.IP "\fB-o\fR \fIfilename\fR"
+.IP \fB--output=\fR\fIfilename\fR
+.PD
+Give the name of the output file.  The default is \fB--output=processed.hkl\fR.
+
+.PD 0
+.IP "\fB-y\fR \fIpointgroup\fR"
+.IP \fB--symmetry=\fR\fIpointgroup\fR
+.PD
+Merge according to symmetry \fIpointgroup\fR.
+
+.PD 0
+.IP "\fB-k\fR \fIspacegroupNum\fR"
+.IP \fB--spacegroupNum=\fR\fIspacegroupNum\fR
+.PD
+To determine crystal twinning according to space group \fIspacegroupNum\fR (143~199).
+
+.PD 0
+.IP "\fB-m\fR \fImaxIter\fR"
+.IP \fB--max-niter=\fR\fImaxIter\fR
+.PD
+Maximum expectation maximization iteration for detwinning (\fImaxIter\fR).
+
+.PD 0
+.IP "\fB-g\fR \fIh,k,l\fR"
+.IP \fB--histogram=\fR\fIh,k,l\fR
+.PD
+Calculate a histogram of intensities for \fIh,k,l\fR, which will be written as
+\fBhistogram.dat\fR in the current directory.
+
+.PD 0
+.IP "\fB-z\fR \fImin,max,nbins\fR"
+.IP \fB--hist-parameters=\fR\fImin,max,nbins\fR
+.PD
+Set the minimum and maximum values, and the number of bins, to \fImin\fR, \fImax\fR and \fInbins\fR, respectively.
+
+.PD 0
+.IP \fB--start-after=\fR\fIn\fR
+.PD
+Ignore the first \fIn\fR crystals in the input.  The default is \fB--start-after=0\fR, i.e. start at the beginning.
+
+.PD 0
+.IP \fB--stop-after=\fR\fIn\fR
+.PD
+Stop processing after \fIn\fR crystals have been successfully merged.  The default is \fB--stop-after=0\fR, which means to process all the patterns from the start point to the end of the input (see \fB--start-after\fR).
+
+.PD 0
+.IP \fB--even-only\fR
+.PD
+Merge only the even-numbered crystals in the stream.  "Even-numbered" is defined simply according to position in the stream, i.e. not according to any serial number.  See also \fB--odd-only\fR.
+
+.PD 0
+.IP \fB--odd-only\fR
+.PD
+Merge only the odd-numbered crystals in the stream.  "Odd-numbered" is defined simply according to position in the stream, i.e. not according to any serial number.  See also \fB--even-only\fR.
+
+.PD 0
+.IP \fB--scale\fR
+.PD
+Perform a second pass through the input, scaling each crystal's intensities to best fit the initial model.
+
+Use \fBpartialator\fR if you need more advanced merging techniques.
+
+.PD 0
+.IP \fB--winner-takes-all\fR
+.PD
+If set, among among all possible twinning modes, only the one with higest cc to reference model will merge. For default, all twinning modes merge in a weighted way.
+
+.PD 0
+.IP \fB--no-polarisation\fR
+.PD
+Disable the polarisation correction.
+
+.PD 0
+.IP \fB--min-measurements=\fR\fIn\fR
+.PD
+Include a reflection in the output only if it appears at least least \fIn\fR times.  The default is \fB--min-measurements=2\fR.
+
+.PD 0
+.IP \fB--min-snr=\fR\fIn\fR
+.PD
+Use a particular individual reflection intensity measurement only if it exceeds its estimated standard error by at least \fIn\fR.  The default is -infinity, i.e. no cutoff.
+.IP
+\fBWARNING:\fR think very carefully before using this option.  It will bias reflections towards more positive values, even where no signal exists, leading to a data set dominated by the background.  This can invalidate some of the figures of merit for the merit for data quality while severely compromising the actual quality.
+
+.PD 0
+.IP \fB--max-adu=\fR\fIn\fR
+.PD
+Include reflections only if their peak values were less than \fIn\fR.  That means, \fIn\fR is the saturation value of the detector.  The default is infinity, i.e. no cutoff.
+
+.PD 0
+.IP \fB--min-res=\fR\fIn\fR
+.PD
+Merge crystals only if they diffract to beyond \fIn\fR Angstroms resolution.  The default is infinity, i.e. all crystals are included.  The resolution is taken from the diffraction_resolution_limit line in the stream.
+
+.PD 0
+.IP \fB--push-res=\fIn\fR
+.PD
+Merge reflections which are up to \fIn\fR nm^-1 higher than the apparent resolution limit of each individual crystal.  \fIn\fR can be negative to merge \fIlower\fR than the apparent resolution limit.  The default is \fB--push-res=inf\fR, which means no resolution cutoff at all.
+
+.PD 0
+.IP \fB--min-cc=\fIn\fR
+.PD
+Perform a second pass through the input, merging crystals only if their correlation with the initial model is at least \fIn\fR.
+
+.PD 0
+.IP \fB--stat=\fIfilename\fR
+.PD
+Perform a second pass through the input and, for each crystal merged, write a line to \fIfilename\fR containing the filename, scale factor and correlation coefficient with the initial model.  The scale factors will all be 1 unless \fB--scale\fR is also used.
+
+.SH CHOICE OF POINT GROUP FOR MERGING
+
+One of the main features of serial crystallography is that the orientations of
+individual crystals are random.  That means that the orientation of each
+crystal must be determined independently, with no information about its
+relationship to the orientation of crystals in other patterns.
+
+Some symmetry classes are merohedral, which means that they have lower symmetry than their lattices. This means that the orientation determined by indexing will have an ambiguity.  In such cases, you will need to merge according to corresponding holohedral point group.  To determine what this is, consult the tables in \fRtwin-calculator.pdf\fB.
+
+.SH AUTHOR
+This page was written by Thomas White and YC Shi.
+
+.SH REPORTING BUGS
+Report bugs to <shiyc12@csrc.ac.cn>.
+
+.SH COPYRIGHT AND DISCLAIMER
+Copyright © 2012-2018 Deutsches Elektronen-Synchrotron DESY, a research centre of the Helmholtz Association.
+Copyright © 2014-2019 Beijing Computational Science Research Center
+.P
+detwin, and this manual, are 3rd-party patch for CrystFEL.
+.P
+CrystFEL is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+.P
+CrystFEL is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more details.
+.P
+You should have received a copy of the GNU General Public License along with CrystFEL.  If not, see <http://www.gnu.org/licenses/>.
+
+.SH SEE ALSO
+.BR crystfel (7),
+.BR process_hkl (1),
+.BR indexamajig (5),
+.BR compare_hkl (1),
+.BR check_hkl (1),
+.BR render_hkl (1),
+.BR ambigator (1),
+.BR partialator (1)

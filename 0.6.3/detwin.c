@@ -49,6 +49,7 @@
 #include <getopt.h>
 #include <assert.h>
 
+#include "version.h"
 #include "utils.h"
 #include "statistics.h"
 #include "reflist-utils.h"
@@ -1052,7 +1053,7 @@ int main(int argc, char *argv[])
 	double push_res = +INFINITY;
 	double min_cc = -INFINITY;
 	int twopass = 0;
-	char *audit_info;
+	//char *audit_info;
 
 	int max_n_iter=30;
 	RefList *full_list;
@@ -1277,8 +1278,8 @@ int main(int argc, char *argv[])
 	/* only output cc information */
 	if(cc_only){
 		double compare_cc[N_TWINS];
-		RefList* ref1 = read_reflections_2(filename, &sym_str);
-		RefList* ref2 = read_reflections_2(output, &sym_str);
+		RefList* ref1 = read_reflections(filename);
+		RefList* ref2 = read_reflections(output);
 		stat_pearson_i_sp(ref1, ref2, compare_cc, sym);
 		STATUS("\nCC between RefList -i and RefList -o for all possible twins : \n")
 		for(int tw=0;tw<N_TWINS;tw++)
@@ -1411,7 +1412,7 @@ int main(int argc, char *argv[])
 		               hist_nbins);
 	}
 
-	audit_info = stream_audit_info(st);
+	//audit_info = stream_audit_info(st);
 	close_stream(st);
 	free(filename);
 
@@ -1438,8 +1439,8 @@ int main(int argc, char *argv[])
 
 	printf("\nWriting results ...\n");
 	reflist_add_command_and_version(full_list, argc, argv);
-	reflist_add_notes(full_list, "Audit information from stream:");
-	reflist_add_notes(full_list, audit_info);
+	//reflist_add_notes(full_list, "Audit information from stream:");
+	//reflist_add_notes(full_list, audit_info);
 	write_reflist_2(output, full_list, sym);
 
 	// clean
