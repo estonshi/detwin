@@ -1,4 +1,5 @@
 # detwin
+
 --
 
 [![license](https://img.shields.io/badge/License-GPL--v3-blue)](https://www.gnu.org/licenses/gpl-3.0.en.html)
@@ -10,9 +11,10 @@
 [Reference paper](http://journals.iucr.org/m/issues/2014/06/00/it5003/index.html) ( Liu, H., & Spence, J. C. (2014). The indexing ambiguity in serial femtosecond crystallography (SFX) resolved using an expectation maximization algorithm. IUCrJ, 1(6), 393-401. )
 
 ### How to install it ?
+
 --
 
-**First**, download crystfel [here](http://www.desy.de/~twhite/crystfel/download.html). Unzip it.
+**First**, download crystfel package [here](http://www.desy.de/~twhite/crystfel/download.html). Unzip it.
 
 **Then**, download detwin from this github repo, unzip and go into the folder.
 
@@ -21,6 +23,7 @@
 **Finally**, install crystfel !
 
 ### How to use it ?
+
 --
 
 **I** . Using unix *man* command for help information.
