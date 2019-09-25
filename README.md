@@ -67,7 +67,7 @@
 
 [![license](https://img.shields.io/badge/built-crystfel--0.6.3-green)](http://www.desy.de/~twhite/crystfel/crystfel-0.6.3.tar.gz)
 [![license](https://img.shields.io/badge/built-crystfel--0.7.0-yellow)](http://www.desy.de/~twhite/crystfel/crystfel-0.7.0.tar.gz)
-[![license](https://img.shields.io/badge/built-crystfel--0.8.0-red)](http://www.desy.de/~twhite/crystfel/crystfel-0.6.3.tar.gz)
+[![license](https://img.shields.io/badge/built-crystfel--0.8.0-red)](http://www.desy.de/~twhite/crystfel/crystfel-0.8.0.tar.gz)
 
 
 
