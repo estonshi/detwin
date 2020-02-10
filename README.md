@@ -26,8 +26,11 @@
 **II**. Type `$CRYSTFEL_PATH/bin/detwin -h` and you will see:
 
 ```
-[Syntax] detwin -i <stream-file> -o <hkl-file> -y <symmetry> -k <space-group-number> [other options]
-[All options]
+Syntax: detwin [options]
+
+read from stream file and convert the data to miller indexed FEL Bragg intensities.
+output all crystals HKL, even numbered crystals HKL, odd numbered crystals HKL
+
   -h, --help                Display this help message.
       --version             Print CrystFEL version number and exit.
   -i, --input=<filename>    Specify input filename ("-" for stdin).
@@ -44,10 +47,9 @@
                              reflection.
   -z, --hist-parameters     Set the range for the histogram and the number of
           =<min,max,nbins>   bins. 
+
       --scale               Scale each pattern for best fit with the current
-                             model.
-      --even-only           Merge even numbered crystals only
-      --odd-only            Merge odd numbered crystals only
+                             model. Operated before detwining.
       --winner-takes-all    If set, among all possible twinning modes, only the one 
                              with higest cc to reference model will merge.
                              Default: all twinning modes merge in a weighted way

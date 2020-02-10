@@ -83,6 +83,7 @@ static void show_help(const char *s)
 	printf("Syntax: %s [options]\n\n", s);
 	printf(
 "read from stream file and convert the data to miller indexed FEL Bragg intensities.\n"
+"output all crystals HKL, even numbered crystals HKL, odd numbered crystals HKL\n"
 "\n"
 "  -h, --help                Display this help message.\n"
 "      --version             Print CrystFEL version number and exit.\n"
@@ -102,9 +103,7 @@ static void show_help(const char *s)
 "          =<min,max,nbins>   bins. \n"
 "\n"
 "      --scale               Scale each pattern for best fit with the current\n"
-"                             model.\n"
-"      --even-only           Merge even numbered crystals only\n"
-"      --odd-only            Merge odd numbered crystals only\n"
+"                             model. Operated before detwining.\n"
 "      --winner-takes-all    If set, among all possible twinning modes, only the one \n"
 "                             with higest cc to reference model will merge.\n"
 "                             Default: all twinning modes merge in a weighted way\n"
@@ -830,6 +829,7 @@ void merge_image_at_winner_orientation( RefList* model, RefList *image, int winn
 		refl != NULL;
 		refl = next_refl(refl, iter) )
 	{
+		
 		refl_sigma = get_esd_intensity(refl);
 		refl_intensity = get_intensity(refl);
 		if ( (min_snr > -INFINITY) && isnan(refl_sigma) ) continue;
@@ -883,7 +883,7 @@ void merge_image_to_model( RefList* model, RefList *image, double* cc, int iter,
 	
 	compute_weights( cc, weights, iter);
 	for( twin=0; twin<N_TWINS; twin++)
-		merge_image_at_winner_orientation( model, image, twin, weights[twin], sym, min_snr );	
+		merge_image_at_winner_orientation( model, image, twin, weights[twin], sym, min_snr);	
 }
 
 
@@ -938,7 +938,8 @@ RefList* make_reflections_for_uc_from_asymm( RefList* asymm, bool random_intensi
 	
 }
 
-RefList* emc( RefList **image_array, RefList* full_list, const SymOpList *sym, int n_image, int max_n_iter, 
+RefList* emc( RefList **image_array, RefList* full_list, RefList* even_list, RefList* odd_list, 
+			const SymOpList *sym, int n_image, int max_n_iter, 
 			int WINNER_TAKES_ALL, double min_snr, int min_measurements )
 {
 
@@ -962,6 +963,7 @@ RefList* emc( RefList **image_array, RefList* full_list, const SymOpList *sym, i
 	{
 
 		this_full_list = reflist_new();
+
 		for( ii=0; ii<N_TWINS; ii++ ) counter[ii] = 0;
 		winner_cc = 0.0;
 
@@ -978,11 +980,21 @@ RefList* emc( RefList **image_array, RefList* full_list, const SymOpList *sym, i
 			winner_cc += cc[winner];
 			counter[ winner ] = counter[ winner ] + 1;
 
-			//STATUS("winner is %d for image %d, cc=%f,%f,%f, counter[winner]=%d\n", winner, image_index, cc[0], cc[1], cc[2], counter[winner]);
-			if ( WINNER_TAKES_ALL || (n_iter == max_n_iter-1) )
-				merge_image_at_winner_orientation( this_full_list, image_a, winner, 1, sym, min_snr );
-			else
-				merge_image_to_model( this_full_list, image_a, cc, n_iter, sym, min_snr );
+			if ( n_iter == max_n_iter-1 ){
+				// full lsit
+				merge_image_at_winner_orientation( this_full_list, image_a, winner, 1, sym, min_snr);
+				// even / odd partial list
+				if ( image_index % 2 == 1 )
+					merge_image_at_winner_orientation( odd_list, image_a, winner, 1, sym, min_snr);
+				else if ( image_index % 2 == 0 )
+					merge_image_at_winner_orientation( even_list, image_a, winner, 1, sym, min_snr);
+			}
+			else{
+				if ( WINNER_TAKES_ALL )
+					merge_image_at_winner_orientation( this_full_list, image_a, winner, 1, sym, min_snr);
+				else
+					merge_image_to_model( this_full_list, image_a, cc, n_iter, sym, min_snr);
+			}
 		}
 
 		winner_cc /= n_image;
@@ -1014,6 +1026,42 @@ RefList* emc( RefList **image_array, RefList* full_list, const SymOpList *sym, i
 
 		n_iter++;
 	}
+
+	// even / odd list
+	/* set min_measurements and esd */
+	for ( refl = first_refl(even_list, &iter);
+		  refl != NULL;
+		  refl = next_refl(refl, iter) )
+	{
+		double var;
+		int red;
+
+		red = get_redundancy(refl);
+		if ( red < min_measurements ) {
+			set_redundancy(refl, 0);
+			continue;
+		}
+		var = get_temp2(refl) / get_temp1(refl);
+		set_esd_intensity(refl, sqrt(var)/sqrt(red));
+	}
+
+	/* set min_measurements and esd */
+	for ( refl = first_refl(odd_list, &iter);
+		  refl != NULL;
+		  refl = next_refl(refl, iter) )
+	{
+		double var;
+		int red;
+
+		red = get_redundancy(refl);
+		if ( red < min_measurements ) {
+			set_redundancy(refl, 0);
+			continue;
+		}
+		var = get_temp2(refl) / get_temp1(refl);
+		set_esd_intensity(refl, sqrt(var)/sqrt(red));
+	}
+
 	return full_list;
 
 }
@@ -1024,13 +1072,13 @@ int main(int argc, char *argv[])
 	int c;
 	char *filename = NULL;
 	char *output = NULL;
+	char output_even[999];
+	char output_odd[999];
 	char *stat_output = NULL;
 	Stream *st;
 	RefList *model;
 	int config_sum = 0;
 	int config_scale = 0;
-	int config_even = 0;
-	int config_odd = 0;
 	char *sym_str = NULL;
 	SymOpList *sym;
 	char *histo = NULL;
@@ -1056,10 +1104,11 @@ int main(int argc, char *argv[])
 	char *audit_info;
 
 	int max_n_iter=30;
-	RefList *full_list;
+	RefList *full_list = NULL;
+	RefList *even_list = NULL;
+	RefList *odd_list = NULL;
 	int n_crystals_recorded=0;
 	int WINNER_TAKES_ALL = 0;
-	int even_odd = 0;
 	int cc_only = 0;
 
 	RefList* image_array[MAX_N_IMAGE];
@@ -1077,8 +1126,6 @@ int main(int argc, char *argv[])
 		{"scale",              0, &config_scale,       1},
 		{"no-polarisation",    0, &config_nopolar,     1},
 		{"no-polarization",    0, &config_nopolar,     1},
-		{"even-only",          0, &config_even,        1},
-		{"odd-only",           0, &config_odd,         1},
 		{"cc-only",            0, &cc_only,            1},
 		{"symmetry",           1, NULL,               'y'},
 		{"spacegroupNum",      1, NULL,               'k'},
@@ -1253,6 +1300,10 @@ int main(int argc, char *argv[])
 	if ( output == NULL ) {
 		output = strdup("processed.hkl");
 	}
+	strcpy(output_odd, output);
+	strcat(output_odd, ".odd");
+	strcpy(output_even, output);
+	strcat(output_even, ".even");
 
 	if ( sym_str == NULL ) {
 		ERROR("Please specify point group using the -y option\n");
@@ -1266,14 +1317,6 @@ int main(int argc, char *argv[])
 	sym = get_pointgroup(sym_str);
 	free(sym_str);
 	STATUS("\nSpace group number is %i, and there are %i twinning mode(s).\n",space_group_num, N_TWINS);
-
-	if(config_even && config_odd){
-		ERROR("Don't specify both --even-only and --odd-only\n")
-		return 1;
-	}
-	if(config_even) even_odd = 1;
-	else if(config_odd) even_odd = 2;
-	else even_odd = 0;
 
 	/* only output cc information */
 	if(cc_only){
@@ -1355,7 +1398,7 @@ int main(int argc, char *argv[])
 		add_all(st, model, NULL, sym, image_array, &hist_vals, hist_h, 
 			hist_k, hist_l, &hist_i, config_nopolar, min_measurements, min_snr,
 			max_adu, start_after, stop_after, min_res, push_res, 
-			min_cc, config_scale, even_odd, stat_output, &n_crystals_recorded);
+			min_cc, config_scale, 0, stat_output, &n_crystals_recorded);
 
 		fprintf(stderr, "\n");
 	}
@@ -1367,7 +1410,7 @@ int main(int argc, char *argv[])
 		add_all(st, model, NULL, sym, NULL, &hist_vals, hist_h, 
 			hist_k, hist_l, &hist_i, config_nopolar, min_measurements, min_snr,
 			max_adu, start_after, stop_after, min_res, push_res, 
-			min_cc, config_scale, even_odd, stat_output, &n_crystals_recorded);
+			min_cc, config_scale, 0, stat_output, &n_crystals_recorded);
 
 		fprintf(stderr, "\n");
 
@@ -1396,7 +1439,7 @@ int main(int argc, char *argv[])
 			add_all(st, model, reference, sym, image_array, &hist_vals, hist_h, 
 					hist_k, hist_l, &hist_i, config_nopolar, min_measurements, min_snr, 
 					max_adu, start_after, stop_after, min_res, push_res, 
-					min_cc, config_scale, even_odd, stat_output, &n_crystals_recorded);
+					min_cc, config_scale, 0, stat_output, &n_crystals_recorded);
 
 			fprintf(stderr, "\n");
 			reflist_free(reference);
@@ -1415,33 +1458,34 @@ int main(int argc, char *argv[])
 	audit_info = stream_audit_info(st);
 	close_stream(st);
 	free(filename);
-
-	/*// no emc
-	reflist_add_command_and_version(model, argc, argv);
-	reflist_add_notes(model, "Audit information from stream:");
-	reflist_add_notes(model, audit_info);
-	write_reflist_2(output, model, sym);
-	reflist_free(model);
-	free_symoplist(sym);
-	free(output);
-
-	printf("\nDone.\n");
-	return 0;
-	*/
 	
 	// Now start anti-ambiguity
 	full_list = reflist_new();
+	even_list = reflist_new();
+	odd_list = reflist_new();
 	full_list = make_reflections_for_uc_from_asymm( model, false, sym, min_measurements );
 
 	printf("\nExpectation Maximization\n");
-	full_list = emc( image_array, full_list, sym, n_crystals_recorded, max_n_iter, 
-			WINNER_TAKES_ALL, min_snr, min_measurements );
+	full_list = emc( image_array, full_list, even_list, odd_list, sym, 
+		n_crystals_recorded, max_n_iter, WINNER_TAKES_ALL, min_snr, 
+		min_measurements );
 
 	printf("\nWriting results ...\n");
+	// full list
 	reflist_add_command_and_version(full_list, argc, argv);
 	reflist_add_notes(full_list, "Audit information from stream:");
 	reflist_add_notes(full_list, audit_info);
 	write_reflist_2(output, full_list, sym);
+	// odd list
+	reflist_add_command_and_version(odd_list, argc, argv);
+	reflist_add_notes(odd_list, "Audit information from stream:");
+	reflist_add_notes(odd_list, audit_info);
+	write_reflist_2(output_odd, odd_list, sym);
+	// even list
+	reflist_add_command_and_version(even_list, argc, argv);
+	reflist_add_notes(even_list, "Audit information from stream:");
+	reflist_add_notes(even_list, audit_info);
+	write_reflist_2(output_even, even_list, sym);
 
 	// clean
 	for(ii=0;ii<n_crystals_recorded;ii++) {
@@ -1450,6 +1494,8 @@ int main(int argc, char *argv[])
 	reflist_free(model);
 	free_symoplist(sym);
 	reflist_free(full_list);
+	reflist_free(odd_list);
+	reflist_free(even_list);
 	free(output);
 
 	printf("Done.\n");
