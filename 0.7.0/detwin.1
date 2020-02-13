@@ -93,6 +93,16 @@ Use \fBpartialator\fR if you need more advanced merging techniques.
 If set, among among all possible twinning modes, only the one with higest cc to reference model will merge. For default, all twinning modes merge in a weighted way.
 
 .PD 0
+.IP \fB--highres=\fR\fIn\fR
+.PD
+Reject reflections with resolution (A) higher than n while calculating CC in detwinning, default is Inf.
+
+.PD 0
+.IP \fB--lowres=\fR\fIn\fR
+.PD
+Reject reflections with resolution (A) lower than n while calculating CC in detwinning, default is 0.
+
+.PD 0
 .IP \fB--no-polarisation\fR
 .PD
 Disable the polarisation correction.

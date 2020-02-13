@@ -107,6 +107,10 @@ static void show_help(const char *s)
 "      --winner-takes-all    If set, among all possible twinning modes, only the one \n"
 "                             with higest cc to reference model will merge.\n"
 "                             Default: all twinning modes merge in a weighted way\n"
+"      --highres=<n>         Reject reflections with resolution (A) higher than n \n"
+"                            while calculating CC in detwinning, default is Inf.\n"
+"      --lowres=<n>          Reject reflections with resolution (A) lower than n \n"
+"                            while calculating CC in detwinning, default is 0.\n"
 "      --no-polarisation     Disable polarisation correction.\n"
 "      --cc-only             Only calculate and display CC between -i and -o hkl file\n"
 "      --min-measurements=<n> Require at least <n> measurements before a\n"
@@ -529,7 +533,7 @@ static int add_crystal(RefList *model, struct image *image, Crystal *cr,
 
 static RefList** add_all(Stream *st, RefList *model, RefList *reference,
                      const SymOpList *sym, RefList** image_array,
-                     double **hist_vals, 
+                     UnitCell** cell_array, double **hist_vals, 
                      signed int hist_h, signed int hist_k, signed int hist_l,
                      int *hist_i, int config_nopolar, int min_measurements,
                      double min_snr, double max_adu, 
@@ -594,6 +598,9 @@ static RefList** add_all(Stream *st, RefList *model, RefList *reference,
 								config_nopolar, min_snr, max_adu, 
 								push_res, min_cc, do_scale, stat);
 			}
+
+			if( cell_array != NULL )
+				cell_array[n_crystals_used] = cell_new_from_cell(crystal_get_cell(cr));
 
 			if ( r == 0 ) {
 				n_crystals_used++;
@@ -686,28 +693,29 @@ void get_ith_twin( int space_group_num, int h, int k, int l, int *he, int *ke, i
 	}
 }
 
-void stat_pearson_i_sp(RefList *image, RefList *full_list, double * val, const SymOpList *sym)
+void stat_pearson_i_sp(RefList *image, RefList *full_list, double * val, 
+			const SymOpList *sym, double rmin, double rmax, UnitCell *cell)
 {
-	double *vec1, *vec2;
+	// double *vec1, *vec2;
 	double *vec3, *vec4;
 	int ni = num_reflections(image);
-	int nacc = 0;
+	// int nacc = 0;
 	int nacc_twin = 0;
 	Reflection *refl1;
 	RefListIterator *iter;
 
-	vec1 = malloc(ni*sizeof(double));
-	vec2 = malloc(ni*sizeof(double));
+	// vec1 = calloc(ni, sizeof(double));
+	// vec2 = calloc(ni, sizeof(double));
 
-	vec3 = malloc(ni*sizeof(double));
-	vec4 = malloc(ni*sizeof(double));
+	vec3 = calloc(ni, sizeof(double));
+	vec4 = calloc(ni, sizeof(double));
 
-	double i1, i2;
+	double i1, i2, res;
 	signed int h, k, l;
 	signed int hp, kp, lp;
 	Reflection *refl2;
 
-	// not twin
+	/* not twin
 	for ( refl1 = first_refl(image, &iter);
 		refl1 != NULL;
 		refl1 = next_refl(refl1, iter) )
@@ -715,7 +723,7 @@ void stat_pearson_i_sp(RefList *image, RefList *full_list, double * val, const S
 		get_indices(refl1, &h, &k, &l);
 		get_asymm(sym, h, k, l, &hp, &kp, &lp);
 		refl2 = find_refl(full_list, hp, kp, lp);
-		if ( refl2 != NULL && get_redundancy(refl2) > 0 ) /* This is a common reflection */
+		if ( refl2 != NULL && get_redundancy(refl2) > 0 )
 		{
 			i1 = get_intensity(refl1);
 			i2 = get_intensity(refl2);
@@ -727,15 +735,23 @@ void stat_pearson_i_sp(RefList *image, RefList *full_list, double * val, const S
 	}
 	if (nacc < 2 ) val[0]=0;
 	else           val[0] = gsl_stats_correlation(vec1, 1, vec2, 1, nacc);
+	*/
 
 	// now, the twin
-	for(int tw=1; tw<N_TWINS; tw++)
+	for(int tw=0; tw<N_TWINS; tw++)
 	{
 		for ( refl1 = first_refl(image, &iter);
 			refl1 != NULL;
 			refl1 = next_refl(refl1, iter) )
 		{
 			get_indices(refl1, &h, &k, &l);
+			// judge resolution
+			if( cell != NULL ){
+				res = 2.0*resolution(cell, h, k, l);
+				if ( res < rmin ) continue;
+				if ( res > rmax ) continue;
+			}
+			// apply twinning
 			signed int he, ke, le;
 			get_ith_twin(space_group_num, h, k, l, &he, &ke, &le, tw);  // space_group_num is a global var
 			get_asymm(sym, he, ke, le, &hp, &kp, &lp);
@@ -757,8 +773,8 @@ void stat_pearson_i_sp(RefList *image, RefList *full_list, double * val, const S
 		nacc_twin = 0;
 	}
 
-		free(vec1);
-		free(vec2);
+		// free(vec1);
+		// free(vec2);
 		free(vec3);
 		free(vec4);
 
@@ -938,9 +954,10 @@ RefList* make_reflections_for_uc_from_asymm( RefList* asymm, bool random_intensi
 	
 }
 
-RefList* emc( RefList **image_array, RefList* full_list, RefList* even_list, RefList* odd_list, 
-			const SymOpList *sym, int n_image, int max_n_iter, 
-			int WINNER_TAKES_ALL, double min_snr, int min_measurements )
+RefList* emc( RefList **image_array, UnitCell **cell_array, RefList* full_list, 
+			RefList* even_list, RefList* odd_list, const SymOpList *sym, 
+			int n_image, int max_n_iter, int WINNER_TAKES_ALL, double min_snr, 
+			int min_measurements, double rmin, double rmax )
 {
 
 	int image_index;
@@ -971,7 +988,7 @@ RefList* emc( RefList **image_array, RefList* full_list, RefList* even_list, Ref
 		{
 
 			image_a = image_array[ image_index ];
-			stat_pearson_i_sp(image_a, full_list, cc, sym);	
+			stat_pearson_i_sp(image_a, full_list, cc, sym, rmin, rmax, cell_array[image_index]);	
 			/* winner takes all *
 			 * find the largest cc, and assign the orientation to it
 			 * add this to the diffraction volume for this round
@@ -1109,8 +1126,12 @@ int main(int argc, char *argv[])
 	int n_crystals_recorded=0;
 	int WINNER_TAKES_ALL = 0;
 	int cc_only = 0;
+	float highres, lowres;
+	double rmin = 0.0;  /* m^-1 */
+	double rmax = INFINITY;  /* m^-1 */
 
 	RefList* image_array[MAX_N_IMAGE];
+	UnitCell* cell_array[MAX_N_IMAGE];
 
 	/* Long options */
 	const struct option longopts[] = {
@@ -1124,7 +1145,6 @@ int main(int argc, char *argv[])
 		{"sum",                0, &config_sum,         1},
 		{"scale",              0, &config_scale,       1},
 		{"no-polarisation",    0, &config_nopolar,     1},
-		{"no-polarization",    0, &config_nopolar,     1},
 		{"cc-only",            0, &cc_only,            1},
 		{"symmetry",           1, NULL,               'y'},
 		{"spacegroupNum",      1, NULL,               'k'},
@@ -1138,6 +1158,8 @@ int main(int argc, char *argv[])
 		{"version",            0, NULL,                7},
 		{"min-cc",             1, NULL,                8},
 		{"stat",               1, NULL,                9},
+		{"highres",            1, NULL,               10},
+		{"lowres",             1, NULL,               11},
 		{0, 0, NULL, 0}
 	};
 
@@ -1277,6 +1299,22 @@ int main(int argc, char *argv[])
 			twopass = 1;
 			break;
 
+			case 10 :
+			if ( sscanf(optarg, "%e", &highres) != 1 ) {
+				ERROR("Invalid value for --highres\n");
+				return 1;
+			}
+			rmax = 1.0 / (highres/1e10);
+			break;
+
+			case 11 :
+			if ( sscanf(optarg, "%e", &lowres) != 1 ) {
+				ERROR("Invalid value for --lowres\n");
+				return 1;
+			}
+			rmin = 1.0 / (lowres/1e10);
+			break;
+
 			case 0 :
 			break;
 
@@ -1322,7 +1360,7 @@ int main(int argc, char *argv[])
 		double compare_cc[N_TWINS];
 		RefList* ref1 = read_reflections(filename);
 		RefList* ref2 = read_reflections(output);
-		stat_pearson_i_sp(ref1, ref2, compare_cc, sym);
+		stat_pearson_i_sp(ref1, ref2, compare_cc, sym, rmin, rmax, NULL);
 		STATUS("\nCC between RefList -i and RefList -o for all possible twins : \n")
 		for(int tw=0;tw<N_TWINS;tw++)
 		{
@@ -1394,7 +1432,7 @@ int main(int argc, char *argv[])
 	if ( ! twopass ) {
 
 		hist_i = 0;
-		add_all(st, model, NULL, sym, image_array, &hist_vals, hist_h, 
+		add_all(st, model, NULL, sym, image_array, cell_array, &hist_vals, hist_h, 
 			hist_k, hist_l, &hist_i, config_nopolar, min_measurements, min_snr,
 			max_adu, start_after, stop_after, min_res, push_res, 
 			min_cc, config_scale, 0, stat_output, &n_crystals_recorded);
@@ -1406,7 +1444,7 @@ int main(int argc, char *argv[])
 	else {
 
 		hist_i = 0;
-		add_all(st, model, NULL, sym, NULL, &hist_vals, hist_h, 
+		add_all(st, model, NULL, sym, NULL, NULL, &hist_vals, hist_h, 
 			hist_k, hist_l, &hist_i, config_nopolar, min_measurements, min_snr,
 			max_adu, start_after, stop_after, min_res, push_res, 
 			min_cc, config_scale, 0, stat_output, &n_crystals_recorded);
@@ -1435,7 +1473,7 @@ int main(int argc, char *argv[])
 				hist_i = 0;
 			}
 
-			add_all(st, model, reference, sym, image_array, &hist_vals, hist_h, 
+			add_all(st, model, reference, sym, image_array, cell_array, &hist_vals, hist_h, 
 					hist_k, hist_l, &hist_i, config_nopolar, min_measurements, min_snr, 
 					max_adu, start_after, stop_after, min_res, push_res, 
 					min_cc, config_scale, 0, stat_output, &n_crystals_recorded);
@@ -1464,24 +1502,30 @@ int main(int argc, char *argv[])
 	full_list = make_reflections_for_uc_from_asymm( model, false, sym, min_measurements );
 
 	printf("\nExpectation Maximization\n");
-	full_list = emc( image_array, full_list, even_list, odd_list, sym, 
-		n_crystals_recorded, max_n_iter, WINNER_TAKES_ALL, min_snr, 
-		min_measurements );
+	full_list = emc( image_array, cell_array, full_list, even_list, odd_list, 
+			sym, n_crystals_recorded, max_n_iter, WINNER_TAKES_ALL, min_snr, 
+			min_measurements, rmin, rmax );
 
 	printf("\nWriting results ...\n");
 	// full list
 	reflist_add_command_and_version(full_list, argc, argv);
+	reflist_add_notes(full_list, "Audit information from stream:");
 	write_reflist_2(output, full_list, sym);
 	// odd list
 	reflist_add_command_and_version(odd_list, argc, argv);
+	reflist_add_notes(odd_list, "Audit information from stream:");
 	write_reflist_2(output_odd, odd_list, sym);
 	// even list
 	reflist_add_command_and_version(even_list, argc, argv);
+	reflist_add_notes(even_list, "Audit information from stream:");
 	write_reflist_2(output_even, even_list, sym);
 
 	// clean
 	for(ii=0;ii<n_crystals_recorded;ii++) {
 		reflist_free( image_array[ii] );
+	}
+	for(ii=0;ii<n_crystals_recorded;ii++) {
+		cell_free( cell_array[ii] );
 	}
 	reflist_free(model);
 	free_symoplist(sym);
