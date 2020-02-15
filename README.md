@@ -53,6 +53,10 @@ output all crystals HKL, even numbered crystals HKL, odd numbered crystals HKL
       --winner-takes-all    If set, among all possible twinning modes, only the one 
                              with higest cc to reference model will merge.
                              Default: all twinning modes merge in a weighted way
+      --highres=<n>         Reject reflections with resolution (A) higher than n 
+                            while calculating CC in detwinning, default is Inf.
+      --lowres=<n>          Reject reflections with resolution (A) lower than n 
+                            while calculating CC in detwinning, default is 0.
       --no-polarisation     Disable polarisation correction.
       --cc-only             Only calculate and display CC between -i and -o hkl file
       --min-measurements=<n> Require at least <n> measurements before a
