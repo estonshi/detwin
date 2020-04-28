@@ -11,11 +11,11 @@
 
 ### - How to install it ?
 
-**First**, download crystfel package [here](http://www.desy.de/~twhite/crystfel/download.html). Unzip it.
+**First**, download CrystFEL package [here](http://www.desy.de/~twhite/crystfel/download.html). Unzip it.
 
 **Then**, download detwin from this github repo, unzip and go into the folder.
 
-**Next**, type `./replaceFile.sh` in terminal. It will ask for your crystfel download path, provide it ! (ABSOLUTE PATH)
+**Next**, type `./replaceFile.sh <crystfel-folder-path>` in terminal. Please provide ABSOLUTE PATH of the CrystFEL folder.
 
 **Finally**, install crystfel !
 
@@ -23,7 +23,7 @@
 
 **I** . Using unix *man* command for help information.
 
-**II**. Type `$CRYSTFEL_PATH/bin/detwin -h` and you will see:
+**II**. Type `<CRYSTFEL-PATH>/bin/detwin -h` and you will see:
 
 ```
 Syntax: detwin [options]
@@ -67,13 +67,16 @@ output all crystals HKL, even numbered crystals HKL, odd numbered crystals HKL
       --max-adu=<n>         Maximum peak value.  Default: infinity.
       --min-res=<n>         Merge only crystals which diffract above <n> A.
       --push-res=<n>        Integrate higher than apparent resolution cutoff.
+      --write-assignments   Write reindexed results of the crystals in original
+              =<filename>   file to filename.
 ```
 
-### - Supported
+### - Supported CrystFEL version
 
 [![license](https://img.shields.io/badge/built-crystfel--0.6.3-green)](http://www.desy.de/~twhite/crystfel/crystfel-0.6.3.tar.gz)
 [![license](https://img.shields.io/badge/built-crystfel--0.7.0-yellow)](http://www.desy.de/~twhite/crystfel/crystfel-0.7.0.tar.gz)
 [![license](https://img.shields.io/badge/built-crystfel--0.8.0-red)](http://www.desy.de/~twhite/crystfel/crystfel-0.8.0.tar.gz)
+[![license](https://img.shields.io/badge/built-crystfel--0.9.0-blue)](http://www.desy.de/~twhite/crystfel/crystfel-0.9.0.tar.gz)
 
 
 
