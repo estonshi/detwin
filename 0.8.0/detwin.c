@@ -120,6 +120,8 @@ static void show_help(const char *s)
 "      --max-adu=<n>         Maximum peak value.  Default: infinity.\n"
 "      --min-res=<n>         Merge only crystals which diffract above <n> A.\n"
 "      --push-res=<n>        Integrate higher than apparent resolution cutoff.\n"
+"      --write-assignments   Write reindexed results of the crystals in original stream\n"
+"              =<filename>   file to filename.\n"
 );
 }
 
@@ -530,7 +532,7 @@ static int add_crystal(RefList *model, struct image *image, Crystal *cr,
 }
 
 
-static RefList** add_all(Stream *st, RefList *model, RefList *reference,
+static int add_all(Stream *st, RefList *model, RefList *reference,
                      const SymOpList *sym, RefList** image_array,
                      UnitCell** cell_array, double **hist_vals, 
                      signed int hist_h, signed int hist_k, signed int hist_l,
@@ -538,12 +540,13 @@ static RefList** add_all(Stream *st, RefList *model, RefList *reference,
                      double min_snr, double max_adu, 
                      int start_after, int stop_after, double min_res, 
                      double push_res, double min_cc, int do_scale, int even_odd, 
-                     char *stat_output, int *n_crystals_recorded)
+                     char *stat_output)
 {
 
 	int rval, i;
 	int n_images = 0;
 	int n_crystals_used = 0, n_crystals_seen = 0;
+	char this_notes[20];
 
 	Reflection *refl;
 	RefListIterator *iter;
@@ -589,6 +592,11 @@ static RefList** add_all(Stream *st, RefList *model, RefList *reference,
 								hist_vals, hist_h, hist_k, hist_l, hist_i,
 								config_nopolar, min_snr, max_adu, 
 								push_res, min_cc, do_scale, stat);
+				// set notes
+				if ( r == 0 ){
+					sprintf(this_notes, "%d", n_crystals_seen-1);
+					reflist_add_notes(image_array[n_crystals_used], this_notes);
+				}
 			}
 			else{
 				r = add_crystal(model, &image, cr, reference, sym, 
@@ -644,8 +652,7 @@ static RefList** add_all(Stream *st, RefList *model, RefList *reference,
 		fclose(stat);
 	}
 
-	*n_crystals_recorded = n_crystals_used;
-	return 0;
+	return n_crystals_used;
 }
 
 void get_twin_num( int space_group_num )
@@ -695,16 +702,12 @@ void get_ith_twin( int space_group_num, int h, int k, int l, int *he, int *ke, i
 void stat_pearson_i_sp(RefList *image, RefList *full_list, double * val, 
 			const SymOpList *sym, double rmin, double rmax, UnitCell *cell)
 {
-	// double *vec1, *vec2;
+
 	double *vec3, *vec4;
 	int ni = num_reflections(image);
-	// int nacc = 0;
 	int nacc_twin = 0;
 	Reflection *refl1;
 	RefListIterator *iter;
-
-	// vec1 = calloc(ni, sizeof(double));
-	// vec2 = calloc(ni, sizeof(double));
 
 	vec3 = calloc(ni, sizeof(double));
 	vec4 = calloc(ni, sizeof(double));
@@ -713,28 +716,6 @@ void stat_pearson_i_sp(RefList *image, RefList *full_list, double * val,
 	signed int h, k, l;
 	signed int hp, kp, lp;
 	Reflection *refl2;
-
-	/* not twin
-	for ( refl1 = first_refl(image, &iter);
-		refl1 != NULL;
-		refl1 = next_refl(refl1, iter) )
-	{
-		get_indices(refl1, &h, &k, &l);
-		get_asymm(sym, h, k, l, &hp, &kp, &lp);
-		refl2 = find_refl(full_list, hp, kp, lp);
-		if ( refl2 != NULL && get_redundancy(refl2) > 0 )
-		{
-			i1 = get_intensity(refl1);
-			i2 = get_intensity(refl2);
-			if( i1<=0 || i2<=0 ) continue;
-			vec1[nacc] = i1;
-			vec2[nacc] = i2;
-			nacc++;
-		}
-	}
-	if (nacc < 2 ) val[0]=0;
-	else           val[0] = gsl_stats_correlation(vec1, 1, vec2, 1, nacc);
-	*/
 
 	// now, the twin
 	for(int tw=0; tw<N_TWINS; tw++)
@@ -772,8 +753,6 @@ void stat_pearson_i_sp(RefList *image, RefList *full_list, double * val,
 		nacc_twin = 0;
 	}
 
-		// free(vec1);
-		// free(vec2);
 		free(vec3);
 		free(vec4);
 
@@ -956,7 +935,7 @@ RefList* make_reflections_for_uc_from_asymm( RefList* asymm, bool random_intensi
 RefList* emc( RefList **image_array, UnitCell **cell_array, RefList* full_list, 
 			RefList* even_list, RefList* odd_list, const SymOpList *sym, 
 			int n_image, int max_n_iter, int WINNER_TAKES_ALL, double min_snr, 
-			int min_measurements, double rmin, double rmax )
+			int min_measurements, double rmin, double rmax, char *output_assignments )
 {
 
 	int image_index;
@@ -970,6 +949,7 @@ RefList* emc( RefList **image_array, UnitCell **cell_array, RefList* full_list,
 	double cc[ N_TWINS ];
 	double winner_cc;
 	int counter[ N_TWINS ], ii;
+	int winner_list[ n_image ];
 
 	n_iter = 0;
 	
@@ -1004,6 +984,8 @@ RefList* emc( RefList **image_array, UnitCell **cell_array, RefList* full_list,
 					merge_image_at_winner_orientation( odd_list, image_a, winner, 1, sym, min_snr);
 				else if ( image_index % 2 == 0 )
 					merge_image_at_winner_orientation( even_list, image_a, winner, 1, sym, min_snr);
+				// update winner_list
+				winner_list[image_index] = winner;
 			}
 			else{
 				if ( WINNER_TAKES_ALL )
@@ -1078,6 +1060,20 @@ RefList* emc( RefList **image_array, UnitCell **cell_array, RefList* full_list,
 		set_esd_intensity(refl, sqrt(var)/sqrt(red));
 	}
 
+	// wirte winner_list
+	if ( output_assignments != NULL ){
+		FILE *fp = fopen(output_assignments, "w");
+		const char *notes;
+		if ( fp != NULL ){
+			fprintf(fp, "%-15s%-20s\n", "crystal-rank", "reindexed-manner");
+			for(image_index=0;image_index<n_image; image_index++){
+				notes = reflist_get_notes(image_array[ image_index ]);
+				fprintf(fp, "%-15s%-20d\n", notes, winner_list[image_index]);
+			}
+		}
+		fclose(fp);
+	}
+
 	return full_list;
 
 }
@@ -1090,6 +1086,7 @@ int main(int argc, char *argv[])
 	char *output = NULL;
 	char output_even[999];
 	char output_odd[999];
+	char *output_assignments = NULL;
 	char *stat_output = NULL;
 	Stream *st;
 	RefList *model;
@@ -1160,6 +1157,7 @@ int main(int argc, char *argv[])
 		{"stat",               1, NULL,                9},
 		{"highres",            1, NULL,               10},
 		{"lowres",             1, NULL,               11},
+		{"write-assignments",  1, NULL,               12},
 		{0, 0, NULL, 0}
 	};
 
@@ -1315,6 +1313,10 @@ int main(int argc, char *argv[])
 			rmin = 1.0 / (lowres/1e10);
 			break;
 
+			case 12 :
+			output_assignments = strdup(optarg);
+			break;
+
 			case 0 :
 			break;
 
@@ -1432,10 +1434,10 @@ int main(int argc, char *argv[])
 	if ( ! twopass ) {
 
 		hist_i = 0;
-		add_all(st, model, NULL, sym, image_array, cell_array, &hist_vals, hist_h, 
+		n_crystals_recorded = add_all(st, model, NULL, sym, image_array, cell_array, &hist_vals, hist_h, 
 			hist_k, hist_l, &hist_i, config_nopolar, min_measurements, min_snr,
 			max_adu, start_after, stop_after, min_res, push_res, 
-			min_cc, config_scale, 0, stat_output, &n_crystals_recorded);
+			min_cc, config_scale, 0, stat_output);
 
 		fprintf(stderr, "\n");
 	}
@@ -1444,10 +1446,10 @@ int main(int argc, char *argv[])
 	else {
 
 		hist_i = 0;
-		add_all(st, model, NULL, sym, NULL, NULL, &hist_vals, hist_h, 
+		n_crystals_recorded = add_all(st, model, NULL, sym, NULL, NULL, &hist_vals, hist_h, 
 			hist_k, hist_l, &hist_i, config_nopolar, min_measurements, min_snr,
 			max_adu, start_after, stop_after, min_res, push_res, 
-			min_cc, config_scale, 0, stat_output, &n_crystals_recorded);
+			min_cc, config_scale, 0, stat_output);
 
 		fprintf(stderr, "\n");
 
@@ -1473,10 +1475,10 @@ int main(int argc, char *argv[])
 				hist_i = 0;
 			}
 
-			add_all(st, model, reference, sym, image_array, cell_array, &hist_vals, hist_h, 
+			n_crystals_recorded = add_all(st, model, reference, sym, image_array, cell_array, &hist_vals, hist_h, 
 					hist_k, hist_l, &hist_i, config_nopolar, min_measurements, min_snr, 
 					max_adu, start_after, stop_after, min_res, push_res, 
-					min_cc, config_scale, 0, stat_output, &n_crystals_recorded);
+					min_cc, config_scale, 0, stat_output);
 
 			fprintf(stderr, "\n");
 			reflist_free(reference);
@@ -1505,7 +1507,7 @@ int main(int argc, char *argv[])
 	printf("\nExpectation Maximization\n");
 	full_list = emc( image_array, cell_array, full_list, even_list, odd_list, 
 			sym, n_crystals_recorded, max_n_iter, WINNER_TAKES_ALL, min_snr, 
-			min_measurements, rmin, rmax );
+			min_measurements, rmin, rmax, output_assignments );
 
 	printf("\nWriting results ...\n");
 	// full list

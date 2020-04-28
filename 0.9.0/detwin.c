@@ -16,7 +16,7 @@
  *   2012      Lorenzo Galli <lorenzo.galli@desy.de>
  *   2014      Chunhong Yoon <chun.hong.yoon@desy.de>
  *   2014      Haiguang Liu <hgliu@csrc.ac.cn>
- *   2019      Yingchen Shi <shiyc12@csrc.ac.cn> 
+ *   2020      Yingchen Shi <shiyc12@csrc.ac.cn> 
  *
  * This file is a 3rd-party patch for CrystFEL.
  *
@@ -49,9 +49,7 @@
 #include <getopt.h>
 #include <assert.h>
 
-#include "version.h"
 #include "utils.h"
-#include "statistics.h"
 #include "reflist-utils.h"
 #include "symmetry.h"
 #include "stream.h"
@@ -72,11 +70,11 @@
 #define MAX_H 256
 #define MAX_K 256
 #define MAX_L 256
-
 #define epsilon 1.e-15
 
 int N_TWINS = -1;
 int space_group_num = -1;
+
 
 static void show_help(const char *s)
 {
@@ -127,10 +125,6 @@ static void show_help(const char *s)
 }
 
 
-double compute_linear_correlation( double *x, double *y, int n_ );
-
-//void get_equivalents(int h, int k, int l, int *hs, int *ks, int *ls, int *n_twins);
-
 static void plot_histogram(double *vals, int n, float hist_min, float hist_max,
                            int nbins)
 {
@@ -179,6 +173,7 @@ static void plot_histogram(double *vals, int n, float hist_min, float hist_max,
 
 	fclose(fh);
 }
+
 
 static double scale_intensities(RefList *reference, RefList *new,
                               const SymOpList *sym)
@@ -304,6 +299,7 @@ static void display_progress(int n_images, int n_crystals, int n_crystals_used)
         fflush(stdout);
 }
 
+
 static unsigned char *flags_from_list(RefList *list)
 {
         Reflection *refl;
@@ -326,6 +322,7 @@ static unsigned char *flags_from_list(RefList *list)
 
 }
 
+
 static double *intensities_from_list(RefList *list)
 {
         Reflection *refl;
@@ -347,7 +344,6 @@ static double *intensities_from_list(RefList *list)
 
         return out;
 }
-
 
 
 static double sym_lookup_intensity(const double *intensities,
@@ -377,6 +373,7 @@ static double sym_lookup_intensity(const double *intensities,
         return ret;
 }
 
+
 void set_esd_for_reflist( RefList *model )
 {
 	RefListIterator *iter;
@@ -396,12 +393,27 @@ void set_esd_for_reflist( RefList *model )
 	}
 }
 
+
+static void apply_kpred(double k, RefList *list)
+{
+	Reflection *refl;
+	RefListIterator *iter;
+
+	for ( refl = first_refl(list, &iter);
+	      refl != NULL;
+	      refl = next_refl(refl, iter) )
+	{
+		set_kpred(refl, k);
+	}
+}
+
+
 static int add_crystal(RefList *model, struct image *image, Crystal *cr,
                        RefList *reference, const SymOpList *sym,
                        RefList *this_image,
                        double **hist_vals, signed int hist_h,
                        signed int hist_k, signed int hist_l, int *hist_n,
-                       int config_nopolar, double min_snr, double max_adu,
+                       struct polarisation polar, double min_snr, double max_adu,
                        double push_res, double min_cc, int do_scale,
                        FILE *stat)
 {
@@ -413,9 +425,8 @@ static int add_crystal(RefList *model, struct image *image, Crystal *cr,
 	new_reflist = crystal_get_reflections(cr);
 
 	/* First, correct for polarisation */
-	if ( !config_nopolar ) {
-		polarisation_correction(new_reflist, crystal_get_cell(cr), image);
-	}
+	apply_kpred(1.0/image->lambda, new_reflist);
+	polarisation_correction(new_reflist, crystal_get_cell(cr), polar);
 
 	if ( reference != NULL ) {
 		if ( do_scale ){
@@ -537,7 +548,7 @@ static int add_all(Stream *st, RefList *model, RefList *reference,
                      const SymOpList *sym, RefList** image_array,
                      UnitCell** cell_array, double **hist_vals, 
                      signed int hist_h, signed int hist_k, signed int hist_l,
-                     int *hist_i, int config_nopolar, int min_measurements,
+                     int *hist_i, struct polarisation polar, int min_measurements,
                      double min_snr, double max_adu, 
                      int start_after, int stop_after, double min_res, 
                      double push_res, double min_cc, int do_scale, int even_odd, 
@@ -591,7 +602,7 @@ static int add_all(Stream *st, RefList *model, RefList *reference,
 				r = add_crystal(model, &image, cr, reference, sym, 
 								image_array[n_crystals_used], 
 								hist_vals, hist_h, hist_k, hist_l, hist_i,
-								config_nopolar, min_snr, max_adu, 
+								polar, min_snr, max_adu, 
 								push_res, min_cc, do_scale, stat);
 				// set notes
 				if ( r == 0 ){
@@ -603,7 +614,7 @@ static int add_all(Stream *st, RefList *model, RefList *reference,
 				r = add_crystal(model, &image, cr, reference, sym, 
 								NULL, 
 								hist_vals, hist_h, hist_k, hist_l, hist_i,
-								config_nopolar, min_snr, max_adu, 
+								polar, min_snr, max_adu, 
 								push_res, min_cc, do_scale, stat);
 			}
 
@@ -656,6 +667,7 @@ static int add_all(Stream *st, RefList *model, RefList *reference,
 	return n_crystals_used;
 }
 
+
 void get_twin_num( int space_group_num )
 {
 	// http://www.ccp4.ac.uk/html/twinning.html
@@ -666,6 +678,7 @@ void get_twin_num( int space_group_num )
 	else if(space_group_num==150 || space_group_num==152 || space_group_num==154) N_TWINS = 3;
 	else N_TWINS = 1;
 }
+
 
 void get_ith_twin( int space_group_num, int h, int k, int l, int *he, int *ke, int *le, int ith )
 {
@@ -699,6 +712,7 @@ void get_ith_twin( int space_group_num, int h, int k, int l, int *he, int *ke, i
 		*he= h; *ke= k; *le= l; return;
 	}
 }
+
 
 void stat_pearson_i_sp(RefList *image, RefList *full_list, double * val, 
 			const SymOpList *sym, double rmin, double rmax, UnitCell *cell)
@@ -760,39 +774,6 @@ void stat_pearson_i_sp(RefList *image, RefList *full_list, double * val,
 		return ;
 }
 
-double compute_linear_correlation( double *x, double *y, int n_ ) {
-	double mean_x_=0.0;
-	double mean_y_=0.0;
-	double delta_x_=0.0;
-	double delta_y_=0.0;
-	double numerator_ = 0.0;
-	double denominator_ = 0.0;
-	double sum_denominator_x_ = 0.0;
-	double sum_denominator_y_ = 0.0;
-	double coefficient_ = 0.0;
-
-	int i;
-
-	for(i=0;i<n_;i++) mean_x_ += x[i];
-	for(i=0;i<n_;i++) mean_y_ += y[i];
-	mean_x_ /= n_;
-	mean_y_ /= n_;
-	for( i=0;i<n_;i++) {
-		delta_x_ = x[i] - mean_x_;
-		delta_y_ = y[i] - mean_y_;
-		numerator_ += delta_x_ * delta_y_;
-		sum_denominator_x_ += delta_x_ * delta_x_;
-		sum_denominator_y_ += delta_y_ * delta_y_;
-	}
-	denominator_ = sqrt(sum_denominator_x_ * sum_denominator_y_);
-	if (numerator_ == 0 && denominator_ == 0) {
-	 	coefficient_ = 1;
-	}
-	else if (denominator_ > fabs(numerator_ * epsilon)) {
-	  coefficient_ = numerator_ / denominator_;
-	}
-	return coefficient_;
-}
 
 int index_of_max_value( double* cc, int n_twins )
 {
@@ -805,6 +786,7 @@ int index_of_max_value( double* cc, int n_twins )
 	}
 	return winner;
 }
+
 
 void merge_image_at_winner_orientation( RefList* model, RefList *image, int winner, double weight, 
 										const SymOpList *sym, double min_snr)
@@ -855,6 +837,7 @@ void merge_image_at_winner_orientation( RefList* model, RefList *image, int winn
 	}
 }
 
+
 void compute_weights( double *cc, double *weights, int iter )
 {
 	double sum_w = 0;
@@ -869,6 +852,7 @@ void compute_weights( double *cc, double *weights, int iter )
 		weights[i] = cc[i] / sum_w;
 	}
 }
+
 
 void merge_image_to_model( RefList* model, RefList *image, double* cc, int iter, 
 							const SymOpList *sym, double min_snr )
@@ -932,6 +916,7 @@ RefList* make_reflections_for_uc_from_asymm( RefList* asymm, bool random_intensi
 	return this_ref_model;
 	
 }
+
 
 RefList* emc( RefList **image_array, UnitCell **cell_array, RefList* full_list, 
 			RefList* even_list, RefList* odd_list, const SymOpList *sym, 
@@ -1101,10 +1086,8 @@ int main(int argc, char *argv[])
 	float hist_min=0.0, hist_max=0.0;
 	double *hist_vals = NULL;
 	int hist_i;
-	//int space_for_hist = 0; //no use
-	//int r;   // no use
+
 	char *histo_params = NULL;
-	int config_nopolar = 0;
 	char *rval;
 	int min_measurements = 2;
 	int start_after = 0;
@@ -1130,6 +1113,9 @@ int main(int argc, char *argv[])
 
 	RefList* image_array[MAX_N_IMAGE];
 	UnitCell* cell_array[MAX_N_IMAGE];
+	struct polarisation polarisation = {.fraction = 1.0,
+	                                    .angle = 0.0,
+	                                    .disable = 0};
 
 	/* Long options */
 	const struct option longopts[] = {
@@ -1142,7 +1128,6 @@ int main(int argc, char *argv[])
 		{"winner-takes-all",   0, &WINNER_TAKES_ALL,   1},
 		{"sum",                0, &config_sum,         1},
 		{"scale",              0, &config_scale,       1},
-		{"no-polarisation",    0, &config_nopolar,     1},
 		{"cc-only",            0, &cc_only,            1},
 		{"symmetry",           1, NULL,               'y'},
 		{"spacegroupNum",      1, NULL,               'k'},
@@ -1159,6 +1144,8 @@ int main(int argc, char *argv[])
 		{"highres",            1, NULL,               10},
 		{"lowres",             1, NULL,               11},
 		{"write-assignments",  1, NULL,               12},
+		{"polarisation",       1, NULL,               13},
+		{"no-polarisation",    0, NULL,               14},
 		{0, 0, NULL, 0}
 	};
 
@@ -1318,6 +1305,13 @@ int main(int argc, char *argv[])
 			output_assignments = strdup(optarg);
 			break;
 
+			case 13 :
+			polarisation = parse_polarisation(optarg);
+			break;
+
+			case 14 :
+			polarisation = parse_polarisation("none");
+
 			case 0 :
 			break;
 
@@ -1436,7 +1430,7 @@ int main(int argc, char *argv[])
 
 		hist_i = 0;
 		n_crystals_recorded = add_all(st, model, NULL, sym, image_array, cell_array, &hist_vals, hist_h, 
-			hist_k, hist_l, &hist_i, config_nopolar, min_measurements, min_snr,
+			hist_k, hist_l, &hist_i, polarisation, min_measurements, min_snr,
 			max_adu, start_after, stop_after, min_res, push_res, 
 			min_cc, config_scale, 0, stat_output);
 
@@ -1448,7 +1442,7 @@ int main(int argc, char *argv[])
 
 		hist_i = 0;
 		n_crystals_recorded = add_all(st, model, NULL, sym, NULL, NULL, &hist_vals, hist_h, 
-			hist_k, hist_l, &hist_i, config_nopolar, min_measurements, min_snr,
+			hist_k, hist_l, &hist_i, polarisation, min_measurements, min_snr,
 			max_adu, start_after, stop_after, min_res, push_res, 
 			min_cc, config_scale, 0, stat_output);
 
@@ -1477,7 +1471,7 @@ int main(int argc, char *argv[])
 			}
 
 			n_crystals_recorded = add_all(st, model, reference, sym, image_array, cell_array, &hist_vals, hist_h, 
-					hist_k, hist_l, &hist_i, config_nopolar, min_measurements, min_snr, 
+					hist_k, hist_l, &hist_i, polarisation, min_measurements, min_snr, 
 					max_adu, start_after, stop_after, min_res, push_res, 
 					min_cc, config_scale, 0, stat_output);
 

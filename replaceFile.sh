@@ -28,14 +28,14 @@ tmp=(${tmp//relnotes-/ })
 version=${tmp[1]}
 if [ ! -d "${rootpath}/${version}" ]
 then
-	echo "CrystFEL version $version is not supported. Use (0.6.3) or (0.7.0) or (0.8.0) ."
+	echo "CrystFEL-$version is not supported. Use version higher than 0.6.3."
 	exit 1
 fi
 
 # get new file
 detwinc=${rootpath}/${version}/detwin.c
 detwinh=${rootpath}/${version}/detwin.h
-if [ ${version}x = "0.8.0"x ]
+if [ ${version}x = "0.8.0"x ] || [ ${version}x = "0.9.0"x ]
 then
 	makefile=${rootpath}/${version}/CMakeLists.txt
 else
