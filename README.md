@@ -13,17 +13,21 @@
 
 **First**, download CrystFEL package [here](http://www.desy.de/~twhite/crystfel/download.html). Unzip it.
 
-**Then**, download detwin from this github repo, unzip and go into the folder.
+**Then**, download detwin package from this github repo, unzip it, and go into the folder.
 
-**Next**, type `./replaceFile.sh <crystfel-folder-path>` in terminal. Please provide ABSOLUTE PATH of the CrystFEL folder.
+**Next**, use command `./replaceFile.sh <crystfel-folder-path>` to merge detwin source files into CrystFEL package. For example:
 
-**Finally**, install crystfel !
+```
+Macintosh:~ detwin$ ./replaceFile.sh ../crystfel-0.9.0
+```
+
+**Finally**, install CrystFEL !
 
 ### - How to use it ?
 
-**I** . Using unix *man* command for help information.
+**I** . Use unix *man* command for help information.
 
-**II**. Type `<CRYSTFEL-PATH>/bin/detwin -h` and you will see:
+**II**. Refer to command line help information : `detwin -h`.
 
 ```
 Syntax: detwin [options]
@@ -69,6 +73,11 @@ output all crystals HKL, even numbered crystals HKL, odd numbered crystals HKL
       --push-res=<n>        Integrate higher than apparent resolution cutoff.
       --write-assignments   Write reindexed results of the crystals in original
               =<filename>   file to filename.
+      (only packages with version >= 0.8.0 have the following options)
+      --add-operators=<op>  Add twinning operators manually, such as '--add-operators=
+                            -h,-k,-l/k,h,l'. DO NOT give space between characters !
+      --max-image-num=<n>   Reset MAX_N_IMAGE, the maximum number of crystals in stream
+                            file. Default is 100000.
 ```
 
 ### - Supported CrystFEL version

@@ -66,16 +66,13 @@
 #include <math.h>
 #include <gsl/gsl_statistics.h>
 
-#define MAX_N_IMAGE 100000
-#define MAX_REFL_PER_IMAGE 20000
-#define MAX_H 256
-#define MAX_K 256
-#define MAX_L 256
-
 #define epsilon 1.e-15
 
-int N_TWINS = -1;
-int space_group_num = -1;
+static int MAX_N_IMAGE = 100000;
+static int N_TWINS = 0;
+static int space_group_num = -1;
+static int ADD_N_TWINS = 0;
+static char *added_operators[99][3];
 
 static void show_help(const char *s)
 {
@@ -91,7 +88,7 @@ static void show_help(const char *s)
 "                             Default: processed.hkl).\n"
 "      --stat=<filename>     Specify output filename for merging statistics.\n"
 "  -y, --symmetry=<sym>      Merge according to point group <sym>.\n"
-"  -k, --spacegroupNum=<k>   Specify space group number (143~199).\n"
+"  -k, --spacegroupNum=<k>   Use space group number to determine twinning operator.\n"
 "  -m, --max-niter=<t>       Number of iterations for de-twinning, default is 30\n"
 "\n"
 "  -s  --start-after=<n>     Skip <n> crystals at the start of the stream.\n"
@@ -122,13 +119,46 @@ static void show_help(const char *s)
 "      --push-res=<n>        Integrate higher than apparent resolution cutoff.\n"
 "      --write-assignments   Write reindexed results of the crystals in original stream\n"
 "              =<filename>   file to filename.\n"
+"      --add-operators=<op>  Add twinning operators manually, such as '--add-operators=\n"
+"                            -h,-k,-l/k,h,l'. DO NOT give space between characters !\n"
+"      --max-image-num=<n>   Reset MAX_N_IMAGE, the maximum number of crystals in stream\n"
+"                            file. Default is 100000.\n"
 );
 }
 
+static void parse_operators(char *operator_str)
+{
+	int num = 0, snum = 0, i = 0;
+	char *str_copy, *pch, *spch;
+	char *op_tmp[99];
+	str_copy = strdup(operator_str);
 
-double compute_linear_correlation( double *x, double *y, int n_ );
+	pch = strtok(str_copy, "/");
+	while(pch != NULL){
+		op_tmp[num] = pch;
+		num += 1;
+		pch = strtok(NULL, "/");
+	}
 
-//void get_equivalents(int h, int k, int l, int *hs, int *ks, int *ls, int *n_twins);
+	ADD_N_TWINS = num;
+	N_TWINS += num;
+
+	for( i=0; i<ADD_N_TWINS; i++){
+		pch = op_tmp[i];
+		snum = 0;
+		spch = strtok(pch, ",");
+		while(spch != NULL){
+			if(snum >= 3) ERROR("Value of option --add-operators is invalid");
+			if(strcmp(spch,"h") && strcmp(spch,"-h") &&
+			   strcmp(spch,"k") && strcmp(spch,"-k") &&
+			   strcmp(spch,"l") && strcmp(spch,"-l"))
+				ERROR("Value of option --add-operators is invalid");
+			added_operators[i][snum] = spch;
+			snum += 1;
+			spch = strtok(NULL, ",");
+		}
+	}
+}
 
 static void plot_histogram(double *vals, int n, float hist_min, float hist_max,
                            int nbins)
@@ -659,43 +689,88 @@ void get_twin_num( int space_group_num )
 {
 	// http://www.ccp4.ac.uk/html/twinning.html
 	// N_TWINS is a global var defined at top of this file, default is 2
-	if((space_group_num>=168 && space_group_num<=173) || (space_group_num>=195 && space_group_num<=199) || space_group_num==146 || (space_group_num>=75 && space_group_num<=80)) N_TWINS = 2;
-	else if(space_group_num>=143 && space_group_num<=145) N_TWINS = 4;
-	else if(space_group_num==149 || space_group_num==151 || space_group_num==153) N_TWINS = 3;
-	else if(space_group_num==150 || space_group_num==152 || space_group_num==154) N_TWINS = 3;
-	else N_TWINS = 1;
+	if((space_group_num>=168 && space_group_num<=173) || (space_group_num>=195 && space_group_num<=199) || space_group_num==146 || (space_group_num>=75 && space_group_num<=80)) N_TWINS += 2;
+	else if(space_group_num>=143 && space_group_num<=145) N_TWINS += 4;
+	else if(space_group_num==149 || space_group_num==151 || space_group_num==153) N_TWINS += 3;
+	else if(space_group_num==150 || space_group_num==152 || space_group_num==154) N_TWINS += 3;
+	else N_TWINS += 1;
 }
 
-void get_ith_twin( int space_group_num, int h, int k, int l, int *he, int *ke, int *le, int ith )
+void get_ith_twin( int h, int k, int l, int *he, int *ke, int *le, int ith )
 {
-	//http://www.ccp4.ac.uk/html/twinning.html
+	char * op_tmp = NULL;
+	int space_group_op_num = 0, i = 0;
+
+	// space group twinning op
+	// http://www.ccp4.ac.uk/html/twinning.html
 	if((space_group_num>=168 && space_group_num<=173) || (space_group_num>=195 && space_group_num<=199) || space_group_num==146 || (space_group_num>=75 && space_group_num<=80)){
-		assert(ith<2);
+		assert(ith < 2 + ADD_N_TWINS);
+		space_group_op_num = 2;
 		if(ith == 0) {*he= h; *ke= k; *le= l; return; }
 		if(ith == 1) {*he= k; *ke= h; *le=-l; return; }
 	}
 	else if(space_group_num>=143 && space_group_num<=145){
-		assert(ith<4);
+		assert(ith < 4 + ADD_N_TWINS);
+		space_group_op_num = 4;
 		if(ith == 0) {*he= h; *ke= k; *le= l; return; }
 		if(ith == 1) {*he=-h; *ke=-k; *le= l; return; }
 		if(ith == 2) {*he= k; *ke= h; *le=-l; return; }
 		if(ith == 3) {*he=-k; *ke=-h; *le=-l; return; }
 	}
 	else if(space_group_num==149 || space_group_num==151 || space_group_num==153){
-		assert(ith<3);
+		assert(ith < 3 + ADD_N_TWINS);
+		space_group_op_num = 3;
 		if(ith == 0) {*he= h; *ke= k; *le= l; return; }
 		if(ith == 1) {*he=-h; *ke=-k; *le= l; return; }
 		if(ith == 2) {*he= k; *ke= h; *le=-l; return; }
 	}
 	else if(space_group_num==150 || space_group_num==152 || space_group_num==154){
-		assert(ith<3);
+		assert(ith < 3 + ADD_N_TWINS);
+		space_group_op_num = 3;
 		if(ith == 0) {*he= h; *ke= k; *le= l; return; }
 		if(ith == 1) {*he=-h; *ke=-k; *le= l; return; }
 		if(ith == 2) {*he=-k; *ke=-h; *le=-l; return; }
 	}
-	else{
-		assert(ith<1);
-		*he= h; *ke= k; *le= l; return;
+	else if(space_group_num > 0){
+		assert(ith < 1 + ADD_N_TWINS);
+		space_group_op_num = 1;
+		if(ith == 0) {*he= h; *ke= k; *le= l; return; }
+	}
+
+	// added op
+	for ( i=0; i<3; i++){
+		op_tmp = added_operators[ith - space_group_op_num][i];
+		if (strcmp(op_tmp, "h") == 0){
+			if ( i == 0 ) {*he= h; continue;}
+			if ( i == 1 ) {*ke= h; continue;}
+			if ( i == 2 ) {*le= h; continue;}
+		}
+		if (strcmp(op_tmp, "-h") == 0){
+			if ( i == 0 ) {*he=-h; continue;}
+			if ( i == 1 ) {*ke=-h; continue;}
+			if ( i == 2 ) {*le=-h; continue;}
+		}
+		if (strcmp(op_tmp, "k") == 0){
+			if ( i == 0 ) {*he= k; continue;}
+			if ( i == 1 ) {*ke= k; continue;}
+			if ( i == 2 ) {*le= k; continue;}
+		}
+		if (strcmp(op_tmp, "-k") == 0){
+			if ( i == 0 ) {*he=-k; continue;}
+			if ( i == 1 ) {*ke=-k; continue;}
+			if ( i == 2 ) {*le=-k; continue;}
+		}
+		if (strcmp(op_tmp, "l") == 0){
+			if ( i == 0 ) {*he= l; continue;}
+			if ( i == 1 ) {*ke= l; continue;}
+			if ( i == 2 ) {*le= l; continue;}
+		}
+		if (strcmp(op_tmp, "-l") == 0){
+			if ( i == 0 ) {*he=-l; continue;}
+			if ( i == 1 ) {*ke=-l; continue;}
+			if ( i == 2 ) {*le=-l; continue;}
+		}
+		ERROR("Bug @get_ith_twin");
 	}
 }
 
@@ -733,7 +808,7 @@ void stat_pearson_i_sp(RefList *image, RefList *full_list, double * val,
 			}
 			// apply twinning
 			signed int he, ke, le;
-			get_ith_twin(space_group_num, h, k, l, &he, &ke, &le, tw);  // space_group_num is a global var
+			get_ith_twin(h, k, l, &he, &ke, &le, tw);
 			get_asymm(sym, he, ke, le, &hp, &kp, &lp);
 			refl2 = find_refl(full_list, hp, kp, lp);
 			if ( refl2 != NULL && get_redundancy(refl2) > 0 ) /* This is a common reflection */
@@ -757,40 +832,6 @@ void stat_pearson_i_sp(RefList *image, RefList *full_list, double * val,
 		free(vec4);
 
 		return ;
-}
-
-double compute_linear_correlation( double *x, double *y, int n_ ) {
-	double mean_x_=0.0;
-	double mean_y_=0.0;
-	double delta_x_=0.0;
-	double delta_y_=0.0;
-	double numerator_ = 0.0;
-	double denominator_ = 0.0;
-	double sum_denominator_x_ = 0.0;
-	double sum_denominator_y_ = 0.0;
-	double coefficient_ = 0.0;
-
-	int i;
-
-	for(i=0;i<n_;i++) mean_x_ += x[i];
-	for(i=0;i<n_;i++) mean_y_ += y[i];
-	mean_x_ /= n_;
-	mean_y_ /= n_;
-	for( i=0;i<n_;i++) {
-		delta_x_ = x[i] - mean_x_;
-		delta_y_ = y[i] - mean_y_;
-		numerator_ += delta_x_ * delta_y_;
-		sum_denominator_x_ += delta_x_ * delta_x_;
-		sum_denominator_y_ += delta_y_ * delta_y_;
-	}
-	denominator_ = sqrt(sum_denominator_x_ * sum_denominator_y_);
-	if (numerator_ == 0 && denominator_ == 0) {
-	 	coefficient_ = 1;
-	}
-	else if (denominator_ > fabs(numerator_ * epsilon)) {
-	  coefficient_ = numerator_ / denominator_;
-	}
-	return coefficient_;
 }
 
 int index_of_max_value( double* cc, int n_twins )
@@ -830,7 +871,7 @@ void merge_image_at_winner_orientation( RefList* model, RefList *image, int winn
 		if ( refl_intensity < min_snr * refl_sigma ) continue;
 
 		get_indices(refl, &h, &k, &l);
-		get_ith_twin(space_group_num, h, k, l, &h, &k, &l, winner);
+		get_ith_twin(h, k, l, &h, &k, &l, winner);
 		get_asymm(sym, h, k, l, &h, &k, &l);
 
 		model_version = find_refl(model, h, k, l);
@@ -914,7 +955,7 @@ RefList* make_reflections_for_uc_from_asymm( RefList* asymm, bool random_intensi
 
 		for(i_twin=0;i_twin<this_N_TWINS;i_twin++)
 		{
-			get_ith_twin(space_group_num, h, k, l, &he, &ke, &le, i_twin);
+			get_ith_twin(h, k, l, &he, &ke, &le, i_twin);
 			get_asymm(sym, he, ke, le, &he, &ke, &le);
 		
 			if( random_intensity ) refl_intensity = rand();
@@ -1090,7 +1131,7 @@ int main(int argc, char *argv[])
 	char *stat_output = NULL;
 	Stream *st;
 	RefList *model;
-	int config_sum = 0;
+	int tmp = 0;
 	int config_scale = 0;
 	char *sym_str = NULL;
 	SymOpList *sym;
@@ -1126,9 +1167,10 @@ int main(int argc, char *argv[])
 	float highres, lowres;
 	double rmin = 0.0;  /* m^-1 */
 	double rmax = INFINITY;  /* m^-1 */
+	char *new_operaters = NULL;
 
-	RefList* image_array[MAX_N_IMAGE];
-	UnitCell* cell_array[MAX_N_IMAGE];
+	RefList** image_array = (RefList**)malloc(MAX_N_IMAGE*sizeof(RefList*));
+	UnitCell** cell_array = (UnitCell**)malloc(MAX_N_IMAGE*sizeof(UnitCell*));
 
 	/* Long options */
 	const struct option longopts[] = {
@@ -1139,7 +1181,6 @@ int main(int argc, char *argv[])
 		{"stop-after",         1, NULL,               'f'},
 		{"max-niter",          1, NULL,               'm'},
 		{"winner-takes-all",   0, &WINNER_TAKES_ALL,   1},
-		{"sum",                0, &config_sum,         1},
 		{"scale",              0, &config_scale,       1},
 		{"no-polarisation",    0, &config_nopolar,     1},
 		{"cc-only",            0, &cc_only,            1},
@@ -1158,6 +1199,8 @@ int main(int argc, char *argv[])
 		{"highres",            1, NULL,               10},
 		{"lowres",             1, NULL,               11},
 		{"write-assignments",  1, NULL,               12},
+		{"add-operators",      1, NULL,               13},
+		{"max-image-num",      1, NULL,               14},
 		{0, 0, NULL, 0}
 	};
 
@@ -1180,7 +1223,6 @@ int main(int argc, char *argv[])
 			break;
 
 			case 's' :
-			errno = 0;
 			start_after = strtod(optarg, &rval);
 			if ( *rval != '\0' ) {
 				ERROR("Invalid value for --start-after.\n");
@@ -1189,7 +1231,6 @@ int main(int argc, char *argv[])
 			break;
 
 			case 'f' :
-			errno = 0;
 			stop_after = strtod(optarg, &rval);
 			if ( *rval != '\0' ) {
 				ERROR("Invalid value for --stop-after.\n");
@@ -1227,7 +1268,6 @@ int main(int argc, char *argv[])
 			break;
 
 			case 2 :
-			errno = 0;
 			min_measurements = strtol(optarg, &rval, 10);
 			if ( *rval != '\0' ) {
 				ERROR("Invalid value for --min-measurements.\n");
@@ -1236,7 +1276,6 @@ int main(int argc, char *argv[])
 			break;
 
 			case 3 :
-			errno = 0;
 			min_snr = strtod(optarg, &rval);
 			if ( *rval != '\0' ) {
 				ERROR("Invalid value for --min-snr.\n");
@@ -1249,7 +1288,6 @@ int main(int argc, char *argv[])
 			break;
 
 			case 4 :
-			errno = 0;
 			max_adu = strtod(optarg, &rval);
 			if ( *rval != '\0' ) {
 				ERROR("Invalid value for --max-adu.\n");
@@ -1258,7 +1296,6 @@ int main(int argc, char *argv[])
 			break;
 
 			case 5 :
-			errno = 0;
 			min_res = strtod(optarg, &rval);
 			if ( *rval != '\0' ) {
 				ERROR("Invalid value for --min-res.\n");
@@ -1268,7 +1305,6 @@ int main(int argc, char *argv[])
 			break;
 
 			case 6 :
-			errno = 0;
 			push_res = strtod(optarg, &rval);
 			if ( *rval != '\0' ) {
 				ERROR("Invalid value for --push-res.\n");
@@ -1283,7 +1319,6 @@ int main(int argc, char *argv[])
 			return 0;
 
 			case 8 :
-			errno = 0;
 			min_cc = strtod(optarg, &rval);
 			if ( *rval != '\0' ) {
 				ERROR("Invalid value for --min-cc.\n");
@@ -1315,6 +1350,20 @@ int main(int argc, char *argv[])
 
 			case 12 :
 			output_assignments = strdup(optarg);
+			break;
+
+			case 13 :
+			new_operaters = strdup(optarg);
+			parse_operators(new_operaters);
+			break;
+
+			case 14:
+			tmp = strtod(optarg, &rval);
+			if ( *rval != '\0' ) {
+				ERROR("Invalid value for --max-image-num.\n");
+				return 1;
+			}
+			if(tmp > MAX_N_IMAGE) MAX_N_IMAGE = tmp;
 			break;
 
 			case 0 :
@@ -1349,13 +1398,22 @@ int main(int argc, char *argv[])
 		return 1;
 	}
 
-	if ( space_group_num == -1 || N_TWINS == -1 ) {
-		ERROR("Please specify space group number using the -k option\n");
+	if ( N_TWINS <= 0 ) {
+		ERROR("Please specify twinning operators using either -k or --add-operators option\n");
 		return 1;
 	}
 	sym = get_pointgroup(sym_str);
 	free(sym_str);
-	STATUS("\nSpace group number is %i, and there are %i twinning mode(s).\n",space_group_num, N_TWINS);
+
+	if( space_group_num <= 0 ){
+		STATUS("\nSpace group number is not given, ");
+	}
+	else{
+		STATUS("\nSpace group number is %i, ",space_group_num);
+	}
+	if( new_operaters != NULL )
+		STATUS("with manually added operators '%s', ", new_operaters);
+	STATUS("so there are totally %i twinning mode(s).\n", N_TWINS);
 
 	/* only output cc information */
 	if(cc_only){
@@ -1539,6 +1597,8 @@ int main(int argc, char *argv[])
 	reflist_free(odd_list);
 	reflist_free(even_list);
 	free(output);
+	free(image_array);
+	free(cell_array);
 
 	printf("Done.\n");
 
