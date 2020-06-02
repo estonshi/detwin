@@ -5,7 +5,7 @@
 ![language](https://img.shields.io/badge/Language-C-blue)
 
 
-**detwin** is a third-party patch for **crystfel software**, which helps solving twinning problems in crystal indexing.
+**detwin** is a third-party patch for **CrystFEL software**, which helps solve twinning problems in SFX crystal indexing.
 
 [Reference paper](http://journals.iucr.org/m/issues/2014/06/00/it5003/index.html) ( Liu, H., & Spence, J. C. (2014). The indexing ambiguity in serial femtosecond crystallography (SFX) resolved using an expectation maximization algorithm. IUCrJ, 1(6), 393-401. )
 
