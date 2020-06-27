@@ -68,11 +68,19 @@
 
 #define epsilon 1.e-15
 
-static int MAX_N_IMAGE = 100000;
 static int N_TWINS = 0;
 static int space_group_num = -1;
 static int ADD_N_TWINS = 0;
 static char *added_operators[99][3];
+
+struct image_sm
+{
+	int n_ref;
+	unsigned int *serial;
+	float *intensity;
+	float *sigma;
+	UnitCell* cell;
+};
 
 static void show_help(const char *s)
 {
@@ -83,8 +91,8 @@ static void show_help(const char *s)
 "\n"
 "  -h, --help                Display this help message.\n"
 "      --version             Print CrystFEL version number and exit.\n"
-"  -i, --input=<filename>    Specify input filename (\"-\" for stdin).\n"
-"  -o, --output=<filename>   Specify output filename for merged intensities\n"
+"  -i, --input=<filename>    Specify input stream or hkl filename (\"-\" for stdin).\n"
+"  -o, --output=<filename>   Specify output hkl filename for merged intensities\n"
 "                             Default: processed.hkl).\n"
 "      --stat=<filename>     Specify output filename for merging statistics.\n"
 "  -y, --symmetry=<sym>      Merge according to point group <sym>.\n"
@@ -121,10 +129,31 @@ static void show_help(const char *s)
 "              =<filename>   file to filename.\n"
 "      --add-operators=<op>  Add twinning operators manually, such as '--add-operators=\n"
 "                            -h,-k,-l/k,h,l'. DO NOT give space between characters !\n"
-"      --max-image-num=<n>   Reset MAX_N_IMAGE, the maximum number of crystals in stream\n"
-"                            file. Default is 100000.\n"
+"      --write-stream=<fn>   Write reindexed stream file to fn\n"
 );
 }
+
+
+static int get_crystals_num(char *filename)
+{
+	int num = 0;
+	char line[1024];
+	char *rval = NULL;
+
+	FILE *fh;
+	fh = fopen(filename, "r");
+
+	do{
+		rval = fgets(line, 1023, fh);
+		if ( rval == NULL ) break;
+		if (strcmp(line, CRYSTAL_START_MARKER"\n") == 0) num++;
+	} while(1);
+
+	fclose(fh);
+
+	return num;
+}
+
 
 static void parse_operators(char *operator_str)
 {
@@ -159,6 +188,7 @@ static void parse_operators(char *operator_str)
 		}
 	}
 }
+
 
 static void plot_histogram(double *vals, int n, float hist_min, float hist_max,
                            int nbins)
@@ -208,6 +238,7 @@ static void plot_histogram(double *vals, int n, float hist_min, float hist_max,
 
 	fclose(fh);
 }
+
 
 static double scale_intensities(RefList *reference, RefList *new,
                               const SymOpList *sym)
@@ -333,6 +364,7 @@ static void display_progress(int n_images, int n_crystals, int n_crystals_used)
         fflush(stdout);
 }
 
+
 static unsigned char *flags_from_list(RefList *list)
 {
         Reflection *refl;
@@ -355,6 +387,7 @@ static unsigned char *flags_from_list(RefList *list)
 
 }
 
+
 static double *intensities_from_list(RefList *list)
 {
         Reflection *refl;
@@ -376,7 +409,6 @@ static double *intensities_from_list(RefList *list)
 
         return out;
 }
-
 
 
 static double sym_lookup_intensity(const double *intensities,
@@ -406,28 +438,44 @@ static double sym_lookup_intensity(const double *intensities,
         return ret;
 }
 
-void set_esd_for_reflist( RefList *model )
+
+static void copy_to_image_sm( RefList *model, struct image_sm* model_sm )
 {
 	RefListIterator *iter;
 	Reflection *refl;
+	int n = 0;
+	signed int h, k, l;
 
 	for ( refl = first_refl(model, &iter);
 		  refl != NULL;
 		  refl = next_refl(refl, iter) )
 	{
-		double var;
+		double var, esd;
 		int red;
 
+		get_indices(refl, &h, &k, &l);
+		model_sm->serial[n] = SERIAL(h,k,l);
+		model_sm->intensity[n] = get_intensity(refl);
+
 		red = get_redundancy(refl);
-		if( red<1 ) {set_esd_intensity( refl, 0 ); continue; }
-		var = get_temp2(refl) / get_temp1(refl);
-		set_esd_intensity(refl, sqrt(var)/sqrt(red));
+		if( red<1 ) { esd = 0; }
+		else {
+			var = get_temp2(refl) / get_temp1(refl);
+			esd = sqrt(var)/sqrt(red);
+		}
+		model_sm->sigma[n] = esd;
+
+		n++;
 	}
+
+	model_sm->n_ref = n;
+
 }
+
 
 static int add_crystal(RefList *model, struct image *image, Crystal *cr,
                        RefList *reference, const SymOpList *sym,
-                       RefList *this_image,
+                       struct image_sm *this_image_sm,
                        double **hist_vals, signed int hist_h,
                        signed int hist_k, signed int hist_l, int *hist_n,
                        int config_nopolar, double min_snr, double max_adu,
@@ -437,9 +485,12 @@ static int add_crystal(RefList *model, struct image *image, Crystal *cr,
 	Reflection *refl;
 	RefListIterator *iter;
 	RefList *new_reflist;
+	RefList *this_image;
 	double scale, cc;
+	int n_ref = 0;
 
 	new_reflist = crystal_get_reflections(cr);
+	this_image = reflist_new();
 
 	/* First, correct for polarisation */
 	if ( !config_nopolar ) {
@@ -534,12 +585,13 @@ static int add_crystal(RefList *model, struct image *image, Crystal *cr,
 
 		}
 
-		if( this_image == NULL ) continue;
+		if( this_image_sm == 0 ) continue;
 
 	    // add this reflection to list ('this_image') 
         model_version = find_refl(this_image, h, k, l);
         if ( model_version == NULL ) {
 			model_version = add_refl(this_image, h, k, l);
+			n_ref++;
         }
         // 'add_refl()' initiate all data in 'model_version' to be 0
         mean = get_intensity(model_version);
@@ -557,26 +609,42 @@ static int add_crystal(RefList *model, struct image *image, Crystal *cr,
 		
 	}
 
-	if(this_image != NULL && num_reflections( this_image ) == 0)  { return 1;}
-	else return 0;
+	if(this_image_sm != NULL && num_reflections( this_image ) == 0) return 1;
+
+	if( this_image_sm != NULL ){
+		/* allocate memory for this_image_sm */
+		this_image_sm->n_ref = n_ref;
+		this_image_sm->serial = malloc(n_ref*sizeof(unsigned int));
+		this_image_sm->intensity = malloc(n_ref*sizeof(float));
+		this_image_sm->sigma = malloc(n_ref*sizeof(float));
+		this_image_sm->cell = cell_new_from_cell(crystal_get_cell(cr));
+
+		/* set this_image_sm */
+		copy_to_image_sm(this_image, this_image_sm);
+	}
+
+	reflist_free(this_image);
+	return 0;
 }
 
 
 static int add_all(Stream *st, RefList *model, RefList *reference,
-                     const SymOpList *sym, RefList** image_array,
-                     UnitCell** cell_array, double **hist_vals, 
+                     const SymOpList *sym, struct image_sm **image_array,
+                     double **hist_vals, 
                      signed int hist_h, signed int hist_k, signed int hist_l,
                      int *hist_i, int config_nopolar, int min_measurements,
                      double min_snr, double max_adu, 
                      int start_after, int stop_after, double min_res, 
-                     double push_res, double min_cc, int do_scale, int even_odd, 
-                     char *stat_output)
+                     double push_res, double min_cc, int do_scale, 
+                     char *stat_output, int *assignments)
 {
+	/*
+		image_array and assignments should be NULL or allocated together
+	*/
 
 	int rval, i;
 	int n_images = 0;
 	int n_crystals_used = 0, n_crystals_seen = 0;
-	char this_notes[20];
 
 	Reflection *refl;
 	RefListIterator *iter;
@@ -613,20 +681,15 @@ static int add_all(Stream *st, RefList *model, RefList *reference,
 
 			if(n_crystals_seen <= start_after) continue;
 			if(crystal_get_resolution_limit(cr) < min_res) continue;
-			if(even_odd == 1 && n_crystals_seen%2 == 1) continue;
-			if(even_odd == 2 && n_crystals_seen%2 == 0) continue;
 
 			if( image_array != NULL ){
 				r = add_crystal(model, &image, cr, reference, sym, 
-								image_array[n_crystals_used], 
+								image_array[n_crystals_seen-1], 
 								hist_vals, hist_h, hist_k, hist_l, hist_i,
 								config_nopolar, min_snr, max_adu, 
 								push_res, min_cc, do_scale, stat);
-				// set notes
-				if ( r == 0 ){
-					sprintf(this_notes, "%d", n_crystals_seen-1);
-					reflist_add_notes(image_array[n_crystals_used], this_notes);
-				}
+				if ( r == 0 )
+					assignments[n_crystals_seen-1] = 0;
 			}
 			else{
 				r = add_crystal(model, &image, cr, reference, sym, 
@@ -636,12 +699,8 @@ static int add_all(Stream *st, RefList *model, RefList *reference,
 								push_res, min_cc, do_scale, stat);
 			}
 
-			if( cell_array != NULL )
-				cell_array[n_crystals_used] = cell_new_from_cell(crystal_get_cell(cr));
-
 			if ( r == 0 ) {
 				n_crystals_used++;
-				if( image_array != NULL ) set_esd_for_reflist(image_array[n_crystals_used]);
 			}
 
 			reflist_free(crystal_get_reflections(cr));
@@ -682,8 +741,9 @@ static int add_all(Stream *st, RefList *model, RefList *reference,
 		fclose(stat);
 	}
 
-	return n_crystals_used;
+	return n_crystals_seen;
 }
+
 
 void get_twin_num( int space_group_num )
 {
@@ -695,6 +755,7 @@ void get_twin_num( int space_group_num )
 	else if(space_group_num==150 || space_group_num==152 || space_group_num==154) N_TWINS += 3;
 	else N_TWINS += 1;
 }
+
 
 void get_ith_twin( int h, int k, int l, int *he, int *ke, int *le, int ith )
 {
@@ -770,69 +831,225 @@ void get_ith_twin( int h, int k, int l, int *he, int *ke, int *le, int ith )
 			if ( i == 1 ) {*ke=-l; continue;}
 			if ( i == 2 ) {*le=-l; continue;}
 		}
-		ERROR("Bug @get_ith_twin");
+		ERROR("I can't recognize the input ambiguity operator (No.%d) !", i+1);
 	}
 }
 
-void stat_pearson_i_sp(RefList *image, RefList *full_list, double * val, 
-			const SymOpList *sym, double rmin, double rmax, UnitCell *cell)
+
+SymOpList* get_ith_twin_op(int ith)
+{
+	char *op_str = NULL, op_str_2[99];
+	SymOpList *amb = NULL;
+	int space_group_op_num = 0, i = 0;
+
+	assert(ith >= 0);
+	if(ith == 0) return NULL;
+
+	// space group
+	if((space_group_num>=168 && space_group_num<=173) || (space_group_num>=195 && space_group_num<=199) || space_group_num==146 || (space_group_num>=75 && space_group_num<=80)){
+		assert(ith < 2 + ADD_N_TWINS);
+		space_group_op_num = 2;
+		if(ith == 1) op_str = strdup("k,h,-l");
+	}
+	else if(space_group_num>=143 && space_group_num<=145){
+		assert(ith < 4 + ADD_N_TWINS);
+		space_group_op_num = 4;
+		if(ith == 1) op_str = strdup("-h,-k,l");
+		else if(ith == 2) op_str = strdup("k,h,-l");
+		else if(ith == 3) op_str = strdup("-k,-h,-l");
+	}
+	else if(space_group_num==149 || space_group_num==151 || space_group_num==153){
+		assert(ith < 3 + ADD_N_TWINS);
+		space_group_op_num = 3;
+		if(ith == 1) op_str = strdup("-h,-k,l");
+		else if(ith == 2) op_str = strdup("k,h,-l");
+	}
+	else if(space_group_num==150 || space_group_num==152 || space_group_num==154){
+		assert(ith < 3 + ADD_N_TWINS);
+		space_group_op_num = 3;
+		if(ith == 1) op_str = strdup("-h,-k,l");
+		else if(ith == 2) op_str = strdup("-k,-h,-l");
+	}
+	else if(space_group_num > 0){
+		assert(ith < 1 + ADD_N_TWINS);
+		space_group_op_num = 1;
+	}
+
+	// added op
+	i = ith - space_group_op_num;
+	if(i >= 0){
+		sprintf(op_str_2, "%s,%s,%s", added_operators[i][0], added_operators[i][1], added_operators[i][2]);
+		op_str = strdup(op_str_2);
+	}
+
+	// parse amb
+	if(op_str != NULL){
+		amb = parse_symmetry_operations(op_str);
+		return amb;
+	}
+	else
+		return NULL;
+}
+
+
+void stat_pearson_i_sp(struct image_sm *image, RefList *full_list, double *val, 
+						const SymOpList *sym, double rmin, double rmax)
 {
 
-	double *vec3, *vec4;
-	int ni = num_reflections(image);
-	int nacc_twin = 0;
-	Reflection *refl1;
-	RefListIterator *iter;
-
-	vec3 = calloc(ni, sizeof(double));
-	vec4 = calloc(ni, sizeof(double));
+	double **vec3, **vec4;
+	int ni = image->n_ref;
+	int *nacc_twin = calloc(N_TWINS, sizeof(int));
+	int i, tw;
+	// init vec
+	vec3 = (double**)malloc(N_TWINS*sizeof(double*));
+	vec4 = (double**)malloc(N_TWINS*sizeof(double*));
+	for(i=0; i<N_TWINS; i++){
+		vec3[i] = calloc(ni, sizeof(double));
+		vec4[i] = calloc(ni, sizeof(double));
+	}
 
 	double i1, i2, res;
 	signed int h, k, l;
 	signed int hp, kp, lp;
-	Reflection *refl2;
+	signed int he, ke, le;
 
-	// now, the twin
-	for(int tw=0; tw<N_TWINS; tw++)
+	int refl1_idx;
+	Reflection *refl2;
+	UnitCell *cell;
+
+	for ( refl1_idx=0; refl1_idx<ni; refl1_idx++)
 	{
-		for ( refl1 = first_refl(image, &iter);
-			refl1 != NULL;
-			refl1 = next_refl(refl1, iter) )
-		{
-			get_indices(refl1, &h, &k, &l);
-			// judge resolution
-			if( cell != NULL ){
-				res = 2.0*resolution(cell, h, k, l);
-				if ( res < rmin ) continue;
-				if ( res > rmax ) continue;
-			}
-			// apply twinning
-			signed int he, ke, le;
+
+		h = GET_H(image->serial[refl1_idx]);
+		k = GET_K(image->serial[refl1_idx]);
+		l = GET_L(image->serial[refl1_idx]);
+		cell = image->cell;
+
+		// judge resolution
+		if( cell != NULL ){
+			res = 2.0*resolution(cell, h, k, l);
+			if ( res < rmin ) continue;
+			if ( res > rmax ) continue;
+		}
+
+		i1 = image->intensity[refl1_idx];
+		if( i1<=0 ) continue;
+
+		for(tw=0; tw<N_TWINS; tw++){
+
 			get_ith_twin(h, k, l, &he, &ke, &le, tw);
 			get_asymm(sym, he, ke, le, &hp, &kp, &lp);
 			refl2 = find_refl(full_list, hp, kp, lp);
+
 			if ( refl2 != NULL && get_redundancy(refl2) > 0 ) /* This is a common reflection */
 			{
-				i1 = get_intensity(refl1);
 				i2 = get_intensity(refl2);
-				if( i1<=0 || i2<=0 ) continue;
+				if( i2<=0 ) continue;
 
-				vec3[nacc_twin] = i1;
-				vec4[nacc_twin] = i2;
-				nacc_twin++;
+				vec3[tw][nacc_twin[tw]] = i1;
+				vec4[tw][nacc_twin[tw]] = i2;
+				nacc_twin[tw]++;
 			}
 		}
-		
-		if (nacc_twin < 2 ) val[tw]=0;
-		else                val[tw] = gsl_stats_correlation(vec3, 1, vec4, 1, nacc_twin);
-		nacc_twin = 0;
+
 	}
 
-		free(vec3);
-		free(vec4);
+	for(tw=0; tw<N_TWINS; tw++){
+		if (nacc_twin[tw] < 2 ) val[tw] = 0;
+		else                    val[tw] = gsl_stats_correlation(vec3[tw], 1, vec4[tw], 1, nacc_twin[tw]);
+	}
 
-		return ;
+	// free
+	for(i=0; i<N_TWINS; i++){
+		free(vec3[i]);
+		free(vec4[i]);
+	}
+	free(vec3);
+	free(vec4);
+	free(nacc_twin);
+
+	return;
 }
+
+
+void stat_pearson_i_sp2(RefList *image, RefList *full_list, double *val, 
+						const SymOpList *sym, double rmin, double rmax, UnitCell *cell)
+{
+
+	double **vec3, **vec4;
+	int ni = num_reflections(image);
+	int *nacc_twin = calloc(N_TWINS, sizeof(int));
+	int i, tw;
+	// init vec
+	vec3 = (double**)malloc(N_TWINS*sizeof(double*));
+	vec4 = (double**)malloc(N_TWINS*sizeof(double*));
+	for(i=0; i<N_TWINS; i++){
+		vec3[i] = calloc(ni, sizeof(double));
+		vec4[i] = calloc(ni, sizeof(double));
+	}
+
+	double i1, i2, res;
+	signed int h, k, l;
+	signed int hp, kp, lp;
+	signed int he, ke, le;
+
+	Reflection *refl1;
+	Reflection *refl2;
+	RefListIterator *iter;
+
+	for ( refl1 = first_refl(image, &iter);
+			refl1 != NULL;
+			refl1 = next_refl(refl1, iter) )
+	{
+
+		get_indices(refl1, &h, &k, &l);
+
+		// judge resolution
+		if( cell != NULL ){
+			res = 2.0*resolution(cell, h, k, l);
+			if ( res < rmin ) continue;
+			if ( res > rmax ) continue;
+		}
+
+		i1 = get_intensity(refl1);
+		if( i1<=0 ) continue;
+
+		for(tw=0; tw<N_TWINS; tw++){
+
+			get_ith_twin(h, k, l, &he, &ke, &le, tw);
+			get_asymm(sym, he, ke, le, &hp, &kp, &lp);
+			refl2 = find_refl(full_list, hp, kp, lp);
+
+			if ( refl2 != NULL && get_redundancy(refl2) > 0 ) /* This is a common reflection */
+			{
+				i2 = get_intensity(refl2);
+				if( i2<=0 ) continue;
+
+				vec3[tw][nacc_twin[tw]] = i1;
+				vec4[tw][nacc_twin[tw]] = i2;
+				nacc_twin[tw]++;
+			}
+		}
+
+	}
+
+	for(tw=0; tw<N_TWINS; tw++){
+		if (nacc_twin[tw] < 2 ) val[tw] = 0;
+		else                    val[tw] = gsl_stats_correlation(vec3[tw], 1, vec4[tw], 1, nacc_twin[tw]);
+	}
+
+	// free
+	for(i=0; i<N_TWINS; i++){
+		free(vec3[i]);
+		free(vec4[i]);
+	}
+	free(vec3);
+	free(vec4);
+	free(nacc_twin);
+
+	return;
+}
+
 
 int index_of_max_value( double* cc, int n_twins )
 {
@@ -846,34 +1063,36 @@ int index_of_max_value( double* cc, int n_twins )
 	return winner;
 }
 
-void merge_image_at_winner_orientation( RefList* model, RefList *image, int winner, double weight, 
-										const SymOpList *sym, double min_snr)
+
+void merge_image_at_winner_orientation( RefList* model, struct image_sm *image, int winner,
+										double weight, const SymOpList *sym, double min_snr)
 {
 
-	Reflection *refl;
+	int refl_idx;
 	Reflection *model_version;
-	RefListIterator *iter;
-	int h,k,l;
+	int h, k, l;
 	int model_redundancy;
 	double refl_intensity, refl_sigma;
 	double w;
 	double temp, delta, R, mean, M2, sumweight;
 	w = weight;
 
-	for ( refl = first_refl(image, &iter);
-		refl != NULL;
-		refl = next_refl(refl, iter) )
+	for ( refl_idx = 0; refl_idx < image->n_ref; refl_idx++ )
 	{
 		
-		refl_sigma = get_esd_intensity(refl);
-		refl_intensity = get_intensity(refl);
+		refl_sigma = image->sigma[refl_idx];
+		refl_intensity = image->intensity[refl_idx];
+
 		if ( (min_snr > -INFINITY) && isnan(refl_sigma) ) continue;
 		if ( refl_intensity < min_snr * refl_sigma ) continue;
 
-		get_indices(refl, &h, &k, &l);
+		h = GET_H(image->serial[refl_idx]);
+		k = GET_K(image->serial[refl_idx]);
+		l = GET_L(image->serial[refl_idx]);
 		get_ith_twin(h, k, l, &h, &k, &l, winner);
 		get_asymm(sym, h, k, l, &h, &k, &l);
 
+		// merge to model
 		model_version = find_refl(model, h, k, l);
 		if ( model_version == NULL ) {
 			model_version = add_refl(model, h, k, l);
@@ -895,6 +1114,7 @@ void merge_image_at_winner_orientation( RefList* model, RefList *image, int winn
 	}
 }
 
+
 void compute_weights( double *cc, double *weights, int iter )
 {
 	double sum_w = 0;
@@ -910,13 +1130,15 @@ void compute_weights( double *cc, double *weights, int iter )
 	}
 }
 
-void merge_image_to_model( RefList* model, RefList *image, double* cc, int iter, 
+
+void merge_image_to_model( RefList* model, struct image_sm *image, double* cc, int iter, 
 							const SymOpList *sym, double min_snr )
 {
 	int twin;
 	double weights[ N_TWINS ];
 	
 	compute_weights( cc, weights, iter);
+
 	for( twin=0; twin<N_TWINS; twin++)
 		merge_image_at_winner_orientation( model, image, twin, weights[twin], sym, min_snr);	
 }
@@ -973,15 +1195,16 @@ RefList* make_reflections_for_uc_from_asymm( RefList* asymm, bool random_intensi
 	
 }
 
-RefList* emc( RefList **image_array, UnitCell **cell_array, RefList* full_list, 
+
+RefList* emc( struct image_sm **image_array, RefList* full_list, 
 			RefList* even_list, RefList* odd_list, const SymOpList *sym, 
-			int n_image, int max_n_iter, int WINNER_TAKES_ALL, double min_snr, 
-			int min_measurements, double rmin, double rmax, char *output_assignments )
+			int n_crystals_all, int max_n_iter, int WINNER_TAKES_ALL, double min_snr, 
+			int min_measurements, double rmin, double rmax, int *assignments )
 {
 
 	int image_index;
 	int winner, n_iter;
-	RefList *image_a;
+	struct image_sm *image_a;
 	RefList *this_full_list;
 
 	Reflection *refl;
@@ -989,8 +1212,7 @@ RefList* emc( RefList **image_array, UnitCell **cell_array, RefList* full_list,
 
 	double cc[ N_TWINS ];
 	double winner_cc;
-	int counter[ N_TWINS ], ii;
-	int winner_list[ n_image ];
+	int counter[ N_TWINS ], ii, n_crystals_used;
 
 	n_iter = 0;
 	
@@ -1003,12 +1225,16 @@ RefList* emc( RefList **image_array, UnitCell **cell_array, RefList* full_list,
 
 		for( ii=0; ii<N_TWINS; ii++ ) counter[ii] = 0;
 		winner_cc = 0.0;
+		n_crystals_used = 0;
 
-		for( image_index=0;image_index<n_image; image_index++)
+		for( image_index=0; image_index<n_crystals_all; image_index++)
 		{
 
+			// good crystal ?
+			if ( assignments[image_index] < 0 ) continue;
+
 			image_a = image_array[ image_index ];
-			stat_pearson_i_sp(image_a, full_list, cc, sym, rmin, rmax, cell_array[image_index]);	
+			stat_pearson_i_sp(image_a, full_list, cc, sym, rmin, rmax);	
 			/* winner takes all *
 			 * find the largest cc, and assign the orientation to it
 			 * add this to the diffraction volume for this round
@@ -1025,8 +1251,8 @@ RefList* emc( RefList **image_array, UnitCell **cell_array, RefList* full_list,
 					merge_image_at_winner_orientation( odd_list, image_a, winner, 1, sym, min_snr);
 				else if ( image_index % 2 == 0 )
 					merge_image_at_winner_orientation( even_list, image_a, winner, 1, sym, min_snr);
-				// update winner_list
-				winner_list[image_index] = winner;
+				// update assignments
+				assignments[image_index] = winner;
 			}
 			else{
 				if ( WINNER_TAKES_ALL )
@@ -1034,9 +1260,11 @@ RefList* emc( RefList **image_array, UnitCell **cell_array, RefList* full_list,
 				else
 					merge_image_to_model( this_full_list, image_a, cc, n_iter, sym, min_snr);
 			}
+
+			n_crystals_used++;
 		}
 
-		winner_cc /= n_image;
+		winner_cc /= n_crystals_used;
 
 		printf( "%-13d%-13.5f", n_iter, winner_cc);
 		for(ii=0;ii<N_TWINS;ii++) printf("%d ", counter[ii]);
@@ -1101,22 +1329,240 @@ RefList* emc( RefList **image_array, UnitCell **cell_array, RefList* full_list,
 		set_esd_intensity(refl, sqrt(var)/sqrt(red));
 	}
 
-	// wirte winner_list
-	if ( output_assignments != NULL ){
-		FILE *fp = fopen(output_assignments, "w");
-		const char *notes;
-		if ( fp != NULL ){
-			fprintf(fp, "%-15s%-20s\n", "crystal-rank", "reindexed-manner");
-			for(image_index=0;image_index<n_image; image_index++){
-				notes = reflist_get_notes(image_array[ image_index ]);
-				fprintf(fp, "%-15s%-20d\n", notes, winner_list[image_index]);
-			}
-		}
-		fclose(fp);
-	}
-
 	return full_list;
 
+}
+
+
+static void reindex_reflections(FILE *fh, FILE *ofh, int assignment,
+                                SymOpList *amb)
+{
+	/*
+		If assignment == 0, amb should be NULL
+	*/
+
+	int first = 1;
+
+	do {
+
+		char *rval;
+		char line[1024];
+		int n;
+		signed int h, k, l;
+		int r;
+
+		rval = fgets(line, 1023, fh);
+		if ( rval == NULL ) break;
+
+		if ( strcmp(line, REFLECTION_END_MARKER"\n") == 0 ) {
+			fputs(line, ofh);
+			return;
+		}
+
+		if ( first ) {
+			fputs(line, ofh);
+			first = 0;
+			continue;
+		}
+
+		r = sscanf(line, "%i %i %i%n", &h, &k, &l, &n);
+
+		/* See scanf() manual page about %n to see why <3 is used */
+		if ( (r < 3) && !first ) return;
+
+		if ( assignment > 0 ) {
+			get_equiv(amb, NULL, 0, h, k, l, &h, &k, &l);
+		}
+
+		fprintf(ofh, "%4i %4i %4i%s", h, k, l, line+n);
+
+	} while ( 1 );
+}
+
+
+/* This is nasty, but means the output includes absolutely everything in the
+ * input, even stuff ignored by read_chunk() */
+static void write_reindexed_stream(const char *infile, const char *outfile,
+                                   int *assignments, int argc, char *argv[])
+{
+	FILE *fh;
+	FILE *ofh;
+	int i;
+	struct rvec as, bs, cs;
+	int have_as = 0;
+	int have_bs = 0;
+	int have_cs = 0;
+	int done = 0;
+	SymOpList *amb = NULL;
+
+	fh = fopen(infile, "r");
+	if ( fh == NULL ) {
+		ERROR("Failed to open '%s'\n", infile);
+		return;
+	}
+
+	ofh = fopen(outfile, "w");
+	if ( ofh == NULL ) {
+		ERROR("Failed to open '%s'\n", outfile);
+		return;
+	}
+
+	/* Copy the header */
+	do {
+
+		char line[1024];
+		char *rval;
+
+		rval = fgets(line, 1023, fh);
+		if ( rval == NULL ) {
+			ERROR("Failed to read stream audit info.\n");
+			return;
+		}
+
+		if ( strncmp(line, "-----", 5) == 0 ) {
+
+			done = 1;
+
+			/* Add our own header */
+			fprintf(ofh, "Re-indexed by EM-detwin "CRYSTFEL_VERSIONSTRING"\n");
+			if ( argc > 0 ) {
+				for ( i=0; i<argc; i++ ) {
+					if ( i > 0 ) fprintf(ofh, " ");
+					fprintf(ofh, "%s", argv[i]);
+				}
+				fprintf(ofh, "\n");
+			}
+
+		}
+
+		fputs(line, ofh);
+
+	} while  ( !done );
+
+	i = 0;
+	done = 0;
+	do {
+
+		char *rval;
+		char line[1024];
+		int d = 0;
+		float u, v, w;
+
+		rval = fgets(line, 1023, fh);
+		if ( rval == NULL ) break;
+
+		// good crystal ?
+		if ( assignments[i] < 0 ) {
+			if ( strcmp(line, CRYSTAL_START_MARKER"\n") == 0 ) done = 1;
+			else if ( strcmp(line, CRYSTAL_END_MARKER"\n") == 0 && done == 1) {
+				done = 0;
+				i++;
+				continue;
+			}
+		}
+		// bad crystal, skip
+		if ( done != 0 ) continue;
+
+		if ( strncmp(line, "Cell parameters ", 16) == 0 ) {
+			d = 1;
+		}
+
+		if ( sscanf(line, "astar = %f %f %f", &u, &v, &w) == 3 ) {
+			as.u = u*1e9;  as.v = v*1e9;  as.w = w*1e9;
+			have_as = 1;
+			d = 1;
+		}
+
+		if ( sscanf(line, "bstar = %f %f %f", &u, &v, &w) == 3 ) {
+			bs.u = u*1e9;  bs.v = v*1e9;  bs.w = w*1e9;
+			have_bs = 1;
+			d = 1;
+		}
+
+		if ( sscanf(line, "cstar = %f %f %f", &u, &v, &w) == 3 ) {
+			cs.u = u*1e9;  cs.v = v*1e9;  cs.w = w*1e9;
+			have_cs = 1;
+			d = 1;
+		}
+
+		if ( have_as && have_bs && have_cs ) {
+
+			UnitCell *cell;
+			double asx, asy, asz;
+			double bsx, bsy, bsz;
+			double csx, csy, csz;
+			double a, b, c, al, be, ga;
+
+			cell = cell_new_from_reciprocal_axes(as, bs, cs);
+			assert(cell != NULL);
+
+			amb = get_ith_twin_op(assignments[i]);
+
+			if ( amb != NULL ) {
+
+				signed int h, k, l;
+				struct rvec na, nb, nc;
+
+				get_equiv(amb, NULL, 0, 1, 0, 0, &h, &k, &l);
+				na.u = as.u*h + bs.u*k + cs.u*l;
+				na.v = as.v*h + bs.v*k + cs.v*l;
+				na.w = as.w*h + bs.w*k + cs.w*l;
+
+				get_equiv(amb, NULL, 0, 0, 1, 0, &h, &k, &l);
+				nb.u = as.u*h + bs.u*k + cs.u*l;
+				nb.v = as.v*h + bs.v*k + cs.v*l;
+				nb.w = as.w*h + bs.w*k + cs.w*l;
+
+				get_equiv(amb, NULL, 0, 0, 0, 1, &h, &k, &l);
+				nc.u = as.u*h + bs.u*k + cs.u*l;
+				nc.v = as.v*h + bs.v*k + cs.v*l;
+				nc.w = as.w*h + bs.w*k + cs.w*l;
+
+				cell_set_reciprocal(cell, na.u, na.v, na.w,
+				                          nb.u, nb.v, nb.w,
+				                          nc.u, nc.v, nc.w);
+
+			}
+
+			/* The cell parameters might change, so update them.
+			 * Unique axis, centering and lattice type can't change,
+			 * though. */
+			cell_get_parameters(cell, &a, &b, &c, &al, &be, &ga);
+			fprintf(ofh, "Cell parameters %7.5f %7.5f %7.5f nm,"
+			        " %7.5f %7.5f %7.5f deg\n",
+			        a*1.0e9, b*1.0e9, c*1.0e9,
+			        rad2deg(al), rad2deg(be), rad2deg(ga));
+
+			cell_get_reciprocal(cell, &asx, &asy, &asz,
+			                   &bsx, &bsy, &bsz,
+			                   &csx, &csy, &csz);
+			fprintf(ofh, "astar = %+9.7f %+9.7f %+9.7f nm^-1\n",
+			        asx/1e9, asy/1e9, asz/1e9);
+			fprintf(ofh, "bstar = %+9.7f %+9.7f %+9.7f nm^-1\n",
+			        bsx/1e9, bsy/1e9, bsz/1e9);
+			fprintf(ofh, "cstar = %+9.7f %+9.7f %+9.7f nm^-1\n",
+			        csx/1e9, csy/1e9, csz/1e9);
+
+			cell_free(cell);
+			have_as = 0;  have_bs = 0;  have_cs = 0;
+
+		}
+
+		/* Not a bug: REFLECTION_START_MARKER gets passed through */
+		if ( !d ) fputs(line, ofh);
+
+		if ( strcmp(line, REFLECTION_START_MARKER"\n") == 0 ) {
+			reindex_reflections(fh, ofh, assignments[i++], amb);
+		}
+
+	} while ( 1 );
+
+	if ( !feof(fh) ) {
+		ERROR("Error reading stream.\n");
+	}
+
+	fclose(fh);
+	fclose(ofh);
 }
 
 
@@ -1128,21 +1574,20 @@ int main(int argc, char *argv[])
 	char output_even[999];
 	char output_odd[999];
 	char *output_assignments = NULL;
+	char *output_stream = NULL;
 	char *stat_output = NULL;
+	char *sym_str = NULL;
+	SymOpList *sym;
 	Stream *st;
 	RefList *model;
 	int tmp = 0;
 	int config_scale = 0;
-	char *sym_str = NULL;
-	SymOpList *sym;
 	char *histo = NULL;
 	signed int hist_h, hist_k, hist_l;
 	signed int hist_nbins=50;
 	float hist_min=0.0, hist_max=0.0;
 	double *hist_vals = NULL;
 	int hist_i;
-	//int space_for_hist = 0; //no use
-	//int r;   // no use
 	char *histo_params = NULL;
 	int config_nopolar = 0;
 	char *rval;
@@ -1158,10 +1603,7 @@ int main(int argc, char *argv[])
 	char *audit_info;
 
 	int max_n_iter=30;
-	RefList *full_list = NULL;
-	RefList *even_list = NULL;
-	RefList *odd_list = NULL;
-	int n_crystals_recorded=0;
+	int n_crystals_all=0;
 	int WINNER_TAKES_ALL = 0;
 	int cc_only = 0;
 	float highres, lowres;
@@ -1169,8 +1611,11 @@ int main(int argc, char *argv[])
 	double rmax = INFINITY;  /* m^-1 */
 	char *new_operaters = NULL;
 
-	RefList** image_array = (RefList**)malloc(MAX_N_IMAGE*sizeof(RefList*));
-	UnitCell** cell_array = (UnitCell**)malloc(MAX_N_IMAGE*sizeof(UnitCell*));
+	struct image_sm **image_array = NULL;
+	RefList *full_list = NULL;
+	RefList *even_list = NULL;
+	RefList *odd_list = NULL;
+	int *assignments = NULL;
 
 	/* Long options */
 	const struct option longopts[] = {
@@ -1200,7 +1645,7 @@ int main(int argc, char *argv[])
 		{"lowres",             1, NULL,               11},
 		{"write-assignments",  1, NULL,               12},
 		{"add-operators",      1, NULL,               13},
-		{"max-image-num",      1, NULL,               14},
+		{"write-stream",       1, NULL,               14},
 		{0, 0, NULL, 0}
 	};
 
@@ -1358,12 +1803,7 @@ int main(int argc, char *argv[])
 			break;
 
 			case 14:
-			tmp = strtod(optarg, &rval);
-			if ( *rval != '\0' ) {
-				ERROR("Invalid value for --max-image-num.\n");
-				return 1;
-			}
-			if(tmp > MAX_N_IMAGE) MAX_N_IMAGE = tmp;
+			output_stream = strdup(optarg);
 			break;
 
 			case 0 :
@@ -1420,7 +1860,7 @@ int main(int argc, char *argv[])
 		double compare_cc[N_TWINS];
 		RefList* ref1 = read_reflections_2(filename, &sym_str);
 		RefList* ref2 = read_reflections_2(output, &sym_str);
-		stat_pearson_i_sp(ref1, ref2, compare_cc, sym, rmin, rmax, NULL);
+		stat_pearson_i_sp2(ref1, ref2, compare_cc, sym, rmin, rmax, NULL);
 		STATUS("\nCC between RefList -i and RefList -o for all possible twins : \n")
 		for(int tw=0;tw<N_TWINS;tw++)
 		{
@@ -1484,18 +1924,31 @@ int main(int argc, char *argv[])
 	/* Need to do a second pass if we are scaling */
 	if ( config_scale ) twopass = 1;
 
-	/* init image_array */
-	int ii=0;
-	for(ii=0;ii<MAX_N_IMAGE;ii++) image_array[ii] = reflist_new();
-
 	/* only first pass */
 	if ( ! twopass ) {
 
+		/* get number of crystals */
+		n_crystals_all = get_crystals_num(filename);
+		if (n_crystals_all <= 0) return 1;
+		else STATUS("There are %d crystals in total.", n_crystals_all);
+
+		/* init image array, assignments */
+		image_array = (struct image_sm **)malloc(n_crystals_all*sizeof(struct image_sm*));
+		if(image_array == NULL){
+			ERROR("Fail to allocate memory for crystals.");
+			return 1;
+		}
+		assignments = (int *)malloc(n_crystals_all*sizeof(int));
+		for(tmp=0; tmp<n_crystals_all; tmp++){
+			image_array[tmp] = (struct image_sm *)malloc(sizeof(struct image_sm));
+			assignments[tmp] = -1;
+		}
+
 		hist_i = 0;
-		n_crystals_recorded = add_all(st, model, NULL, sym, image_array, cell_array, &hist_vals, hist_h, 
+		n_crystals_all = add_all(st, model, NULL, sym, image_array, &hist_vals, hist_h, 
 			hist_k, hist_l, &hist_i, config_nopolar, min_measurements, min_snr,
 			max_adu, start_after, stop_after, min_res, push_res, 
-			min_cc, config_scale, 0, stat_output);
+			min_cc, config_scale, stat_output, assignments);
 
 		fprintf(stderr, "\n");
 	}
@@ -1504,10 +1957,12 @@ int main(int argc, char *argv[])
 	else {
 
 		hist_i = 0;
-		n_crystals_recorded = add_all(st, model, NULL, sym, NULL, NULL, &hist_vals, hist_h, 
+
+		// first pass
+		n_crystals_all = add_all(st, model, NULL, sym, NULL, &hist_vals, hist_h, 
 			hist_k, hist_l, &hist_i, config_nopolar, min_measurements, min_snr,
 			max_adu, start_after, stop_after, min_res, push_res, 
-			min_cc, config_scale, 0, stat_output);
+			min_cc, config_scale, stat_output, NULL);
 
 		fprintf(stderr, "\n");
 
@@ -1520,52 +1975,60 @@ int main(int argc, char *argv[])
 			return 1;
 
 		}
-		else {
 
-			STATUS("\nExtra pass for scaling and/or CCs ...\n");
+		STATUS("\nExtra pass for scaling and/or CCs ...\n");
 
-			reference = model;
-			model = reflist_new();
+		reference = model;
+		model = reflist_new();
 
-			if ( hist_vals != NULL ) {
-				free(hist_vals);
-				hist_vals = malloc(1*sizeof(double));
-				hist_i = 0;
-			}
-
-			n_crystals_recorded = add_all(st, model, reference, sym, image_array, cell_array, &hist_vals, hist_h, 
-					hist_k, hist_l, &hist_i, config_nopolar, min_measurements, min_snr, 
-					max_adu, start_after, stop_after, min_res, push_res, 
-					min_cc, config_scale, 0, stat_output);
-
-			fprintf(stderr, "\n");
-			reflist_free(reference);
-
+		if ( hist_vals != NULL ) {
+			free(hist_vals);
+			hist_vals = malloc(1*sizeof(double));
+			hist_i = 0;
 		}
+
+		// allocate image_array and assignments
+		image_array = (struct image_sm **)malloc(n_crystals_all*sizeof(struct image_sm*));
+		if(image_array == NULL){
+			ERROR("Fail to allocate memory for crystals.");
+			return 1;
+		}
+		assignments = (int *)malloc(n_crystals_all*sizeof(int));
+		for(tmp=0; tmp<n_crystals_all; tmp++){
+			image_array[tmp] = (struct image_sm *)malloc(sizeof(struct image_sm));
+			assignments[tmp] = -1;
+		}
+
+		// second pass
+		n_crystals_all = add_all(st, model, reference, sym, image_array, &hist_vals, hist_h, 
+				hist_k, hist_l, &hist_i, config_nopolar, min_measurements, min_snr, 
+				max_adu, start_after, stop_after, min_res, push_res, 
+				min_cc, config_scale, stat_output, assignments);
+
+		fprintf(stderr, "\n");
+		reflist_free(reference);
 
 	}
 
 	if ( hist_vals != NULL ) {
 		STATUS("%i %i %i was seen %i times.\n", hist_h, hist_k, hist_l,
 		                                        hist_i);
-		plot_histogram(hist_vals, hist_i, hist_min, hist_max,
-		               hist_nbins);
+		plot_histogram(hist_vals, hist_i, hist_min, hist_max, hist_nbins);
+		free(hist_vals);
 	}
 
 	audit_info = stream_audit_info(st);
 	close_stream(st);
-	free(filename);
 	
 	// Now start anti-ambiguity
-	full_list = reflist_new();
 	even_list = reflist_new();
 	odd_list = reflist_new();
 	full_list = make_reflections_for_uc_from_asymm( model, false, sym, min_measurements );
 
 	printf("\nExpectation Maximization\n");
-	full_list = emc( image_array, cell_array, full_list, even_list, odd_list, 
-			sym, n_crystals_recorded, max_n_iter, WINNER_TAKES_ALL, min_snr, 
-			min_measurements, rmin, rmax, output_assignments );
+	full_list = emc( image_array, full_list, even_list, odd_list, 
+			sym, n_crystals_all, max_n_iter, WINNER_TAKES_ALL, min_snr, 
+			min_measurements, rmin, rmax, assignments );
 
 	printf("\nWriting results ...\n");
 	// full list
@@ -1583,22 +2046,43 @@ int main(int argc, char *argv[])
 	reflist_add_notes(even_list, "Audit information from stream:");
 	reflist_add_notes(even_list, audit_info);
 	write_reflist_2(output_even, even_list, sym);
+	// wirte assignments
+	if ( output_assignments != NULL ){
+		FILE *fp = fopen(output_assignments, "w");
+		if ( fp != NULL ){
+			fprintf(fp, "%-15s%-20s\n", "crystal-rank", "reindexed-manner");
+			for(tmp=0; tmp<n_crystals_all; tmp++){
+				if(assignments[tmp] < 0) continue;
+				fprintf(fp, "%-15d%-20d\n", tmp, assignments[tmp]);
+			}
+		}
+		fclose(fp);
+	}
+	// write stream file
+	if ( output_stream != NULL ){
+		write_reindexed_stream(filename, output_stream, assignments, argc, argv);
+	}
 
 	// clean
-	for(ii=0;ii<n_crystals_recorded;ii++) {
-		reflist_free( image_array[ii] );
+	for(tmp=0; tmp<n_crystals_all; tmp++) {
+		if(assignments[tmp] < 0) continue;
+		free( image_array[tmp]->serial );
+		free( image_array[tmp]->intensity );
+		free( image_array[tmp]->sigma );
+		cell_free( image_array[tmp]->cell );
+		free(image_array[tmp]);
 	}
-	for(ii=0;ii<n_crystals_recorded;ii++) {
-		cell_free( cell_array[ii] );
-	}
+	free(image_array);
 	reflist_free(model);
 	free_symoplist(sym);
 	reflist_free(full_list);
 	reflist_free(odd_list);
 	reflist_free(even_list);
+	free(filename);
 	free(output);
-	free(image_array);
-	free(cell_array);
+	free(output_stream);
+	free(output_assignments);
+	if(assignments != NULL) free(assignments);
 
 	printf("Done.\n");
 

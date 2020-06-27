@@ -75,9 +75,8 @@ output all crystals HKL, even numbered crystals HKL, odd numbered crystals HKL
               =<filename>   file to filename.
       (only packages with version >= 0.8.0 have the following options)
       --add-operators=<op>  Add twinning operators manually, such as '--add-operators=
-                            -h,-k,-l/k,h,l'. DO NOT give space between characters !
-      --max-image-num=<n>   Reset MAX_N_IMAGE, the maximum number of crystals in stream
-                            file. Default is 100000.
+                            -h,-k,-l/k,h,l'. DO NOT add space between characters !
+      --write-stream=<fn>   Write reindexed stream file to fn.
 ```
 
 ### - Supported CrystFEL version
