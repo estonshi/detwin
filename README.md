@@ -7,7 +7,9 @@
 
 **detwin** is a third-party patch for **CrystFEL software**, which helps solve twinning problems in SFX crystal indexing.
 
-[Reference paper](http://journals.iucr.org/m/issues/2014/06/00/it5003/index.html) ( Liu, H., & Spence, J. C. (2014). The indexing ambiguity in serial femtosecond crystallography (SFX) resolved using an expectation maximization algorithm. IUCrJ, 1(6), 393-401. )
+[Method paper](http://journals.iucr.org/m/issues/2014/06/00/it5003/index.html) ( Liu, H., & Spence, J. C. (2014). The indexing ambiguity in serial femtosecond crystallography (SFX) resolved using an expectation maximization algorithm. IUCrJ, 1(6), 393-401. )
+
+[Software paper](https://www.mdpi.com/2073-4352/10/7/588)(Shi, Y. , & Liu, H. . (2020). Em-detwin: a program for resolving indexing ambiguity in serial crystallography using the expectation-maximization algorithm. Crystals, 10(7), 588.)
 
 ### - How to install it ?
 
